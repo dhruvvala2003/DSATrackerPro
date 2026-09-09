@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabaseClient'
 
 const initialFormData = {
@@ -11,12 +12,18 @@ const initialFormData = {
   goodApproachCode: '',
   optimalApproachCode: '',
   problemNotes: '',
+  problemCompanies: '',
   problemDifficulty: 'Medium',
   selectedTopic: '',
   selectedSubtopic: '',
 }
 
 export default function AdminPanel() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const query = new URLSearchParams(location.search)
+  const isEditMode = query.get('mode') === 'edit'
+  const editingProblemId = query.get('problemId') || ''
   const [step, setStep] = useState('topic')
   const [topics, setTopics] = useState([])
   const [subtopics, setSubtopics] = useState([])
@@ -42,12 +49,64 @@ export default function AdminPanel() {
       setTopics(topicData || [])
       setSubtopics(subtopicData || [])
     }
+
+    if (isEditMode && editingProblemId) {
+      await loadProblemForEdit(editingProblemId, topicData || [], subtopicData || [])
+    }
+
     setLoading(false)
+  }
+
+  const loadProblemForEdit = async (problemId, topicList = [], subtopicList = []) => {
+    const primaryFields = 'id, subtopic_id, title, brute_force_code, good_approach_code, optimal_approach_code, code_snippet, notes, difficulty, status, companies'
+    const fallbackFields = 'id, subtopic_id, title, brute_force_code, good_approach_code, optimal_approach_code, code_snippet, notes, difficulty, status'
+
+    const { data: problemData, error: problemError } = await supabase
+      .from('problems')
+      .select(primaryFields)
+      .eq('id', problemId)
+      .single()
+
+    let loadedProblem = problemData
+    let loadError = problemError
+
+    if (loadError?.message?.toLowerCase().includes('companies')) {
+      const fallback = await supabase
+        .from('problems')
+        .select(fallbackFields)
+        .eq('id', problemId)
+        .single()
+
+      loadedProblem = fallback.data
+      loadError = fallback.error
+    }
+
+    if (loadError) {
+      setSubmitError(handleError(loadError, 'check'))
+      return
+    }
+
+    const subtopic = subtopicList.find((item) => String(item.id) === String(loadedProblem.subtopic_id)) || null
+    const topic = topicList.find((item) => String(item.id) === String(subtopic?.topic_id)) || null
+
+    setFormData({
+      ...initialFormData,
+      selectedTopic: topic?.id || '',
+      selectedSubtopic: subtopic?.id || loadedProblem.subtopic_id || '',
+      problemTitle: loadedProblem.title || '',
+      bruteForceCode: loadedProblem.brute_force_code || '',
+      goodApproachCode: loadedProblem.good_approach_code || '',
+      optimalApproachCode: loadedProblem.optimal_approach_code || loadedProblem.code_snippet || '',
+      problemNotes: loadedProblem.notes || '',
+      problemCompanies: Array.isArray(loadedProblem.companies) ? loadedProblem.companies.join(', ') : '',
+      problemDifficulty: loadedProblem.difficulty || 'Medium',
+    })
+    setStep('problem')
   }
 
   useEffect(() => {
     queueMicrotask(loadOptions)
-  }, [])
+  }, [location.search])
 
   const updateField = (field, value) => {
     setFormData((current) => ({ ...current, [field]: value }))
@@ -174,8 +233,52 @@ export default function AdminPanel() {
       return
     }
 
+    const companies = normalizeCompanies(formData.problemCompanies)
+    const payload = {
+      subtopic_id: formData.selectedSubtopic,
+      title: problemTitle,
+      brute_force_code: formData.bruteForceCode.trim(),
+      good_approach_code: formData.goodApproachCode.trim(),
+      optimal_approach_code: formData.optimalApproachCode.trim(),
+      code_snippet: formData.optimalApproachCode.trim(),
+      notes: formData.problemNotes.trim(),
+      difficulty: formData.problemDifficulty,
+      status: 'Not Started',
+    }
+
+    if (companies.length) {
+      payload.companies = companies
+    }
+
     setSaving(true)
     setSubmitError('')
+
+    if (isEditMode && editingProblemId) {
+      let { error: updateError } = await supabase
+        .from('problems')
+        .update(payload)
+        .eq('id', editingProblemId)
+
+      if (updateError?.message?.toLowerCase().includes('companies')) {
+        delete payload.companies
+        const retry = await supabase
+          .from('problems')
+          .update(payload)
+          .eq('id', editingProblemId)
+        updateError = retry.error
+      }
+
+      setSaving(false)
+
+      if (updateError) {
+        setSubmitError(handleError(updateError))
+        return
+      }
+
+      navigate(`/problem/${editingProblemId}`)
+      return
+    }
+
     const { data: existingProblems, error: duplicateCheckError } = await supabase
       .from('problems')
       .select('id')
@@ -193,17 +296,12 @@ export default function AdminPanel() {
       return
     }
 
-    const { error } = await supabase.from('problems').insert({
-      subtopic_id: formData.selectedSubtopic,
-      title: problemTitle,
-      brute_force_code: formData.bruteForceCode.trim(),
-      good_approach_code: formData.goodApproachCode.trim(),
-      optimal_approach_code: formData.optimalApproachCode.trim(),
-      code_snippet: formData.optimalApproachCode.trim(),
-      notes: formData.problemNotes.trim(),
-      difficulty: formData.problemDifficulty,
-      status: 'Not Started',
-    })
+    let { error } = await supabase.from('problems').insert(payload)
+    if (error?.message?.toLowerCase().includes('companies')) {
+      delete payload.companies
+      const retry = await supabase.from('problems').insert(payload)
+      error = retry.error
+    }
     setSaving(false)
 
     if (error) {
@@ -211,8 +309,16 @@ export default function AdminPanel() {
       return
     }
 
-    setFormData((current) => ({ ...current, problemTitle: '', bruteForceCode: '', goodApproachCode: '', optimalApproachCode: '', problemNotes: '' }))
+    setFormData((current) => ({ ...current, problemTitle: '', bruteForceCode: '', goodApproachCode: '', optimalApproachCode: '', problemNotes: '', problemCompanies: '' }))
     setSuccessMessage('Question added. You can add another one or choose a different subtopic.')
+  }
+
+  const normalizeCompanies = (companyText) => {
+    if (!companyText || !companyText.trim()) return []
+    return companyText
+      .split(',')
+      .map((company) => company.trim())
+      .filter(Boolean)
   }
 
   const visibleSubtopics = formData.selectedTopic
@@ -272,6 +378,7 @@ export default function AdminPanel() {
             <div className="form-field"><label htmlFor="problem-subtopic">Subtopic</label><select id="problem-subtopic" value={formData.selectedSubtopic} onChange={(event) => updateField('selectedSubtopic', event.target.value)} disabled={!formData.selectedTopic}><option value="">{formData.selectedTopic ? 'Choose a subtopic' : 'Choose a topic first'}</option>{visibleSubtopics.map((subtopic) => <option key={subtopic.id} value={subtopic.id}>{subtopic.name}</option>)}</select></div>
             <div className="form-field"><label htmlFor="problem-title">Question title</label><input id="problem-title" value={formData.problemTitle} onChange={(event) => updateField('problemTitle', event.target.value)} placeholder="e.g. Find the maximum subarray" /></div>
             <div className="form-field"><label htmlFor="problem-difficulty">Difficulty</label><select id="problem-difficulty" value={formData.problemDifficulty} onChange={(event) => updateField('problemDifficulty', event.target.value)}><option>Easy</option><option>Medium</option><option>Hard</option></select></div>
+            <div className="form-field"><label htmlFor="problem-companies">Companies</label><input id="problem-companies" value={formData.problemCompanies} onChange={(event) => updateField('problemCompanies', event.target.value)} placeholder="Microsoft, Google, Amazon" /></div>
             <div className="solution-fields">
               <div className="solution-field"><span className="solution-label">01 / Brute force</span><textarea id="problem-brute-force" value={formData.bruteForceCode} onChange={(event) => updateField('bruteForceCode', event.target.value)} placeholder="Straightforward solution" /></div>
               <div className="solution-field"><span className="solution-label">02 / Good approach</span><textarea id="problem-good-approach" value={formData.goodApproachCode} onChange={(event) => updateField('goodApproachCode', event.target.value)} placeholder="Improved solution" /></div>

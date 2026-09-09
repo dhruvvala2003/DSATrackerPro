@@ -10,7 +10,6 @@ export default function SiteHeader() {
       </NavLink>
       <nav className="site-nav" aria-label="Main navigation">
         <NavLink to="/solve" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Explore topics</NavLink>
-        <NavLink to="/admin/add" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Admin</NavLink>
         <NavLink to="/solve" className="header-action">Start solving <ArrowUpRight size={16} /></NavLink>
       </nav>
     </header>

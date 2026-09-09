@@ -37,8 +37,8 @@ export default function ProblemDetailPage() {
   return (
     <div className="content-page">
       <div className="content-container" style={{ maxWidth: '860px' }}>
-        <Link to="/topics" className="back-link">
-          ← Back to topics
+        <Link to="/solve" className="back-link">
+          ← Back to solve
         </Link>
 
         <div className="detail-panel">

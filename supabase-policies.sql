@@ -10,6 +10,8 @@ alter table public.problems enable row level security;
 alter table public.problems add column if not exists brute_force_code text;
 alter table public.problems add column if not exists good_approach_code text;
 alter table public.problems add column if not exists optimal_approach_code text;
+alter table public.problems add column if not exists code_snippet text;
+alter table public.problems add column if not exists companies text[] default '{}'::text[];
 
 update public.problems
 set optimal_approach_code = code_snippet
@@ -42,3 +44,11 @@ create policy "Allow problems to be read by app" on public.problems for select t
 drop policy if exists "Allow problem creation from app" on public.problems;
 create policy "Allow problem creation from app" on public.problems for insert to anon, authenticated
 with check (subtopic_id is not null and title is not null and char_length(trim(title)) > 0);
+
+drop policy if exists "Allow problem update from app" on public.problems;
+create policy "Allow problem update from app" on public.problems for update to anon, authenticated
+using (true)
+with check (subtopic_id is not null and title is not null and char_length(trim(title)) > 0);
+
+drop policy if exists "Allow problem delete from app" on public.problems;
+create policy "Allow problem delete from app" on public.problems for delete to anon, authenticated using (true);
