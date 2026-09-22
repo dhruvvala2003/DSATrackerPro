@@ -25,26 +25,30 @@ export default function ProblemsPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    const controller = new AbortController()
+
     const fetchSubtopicAndProblems = async () => {
       try {
         const [subtopicResponse, problemsResponse] = await Promise.all([
-          supabase.from('subtopics').select('*, topics(id, name)').eq('id', subtopicId).single(),
-          supabase.from('problems').select('*').eq('subtopic_id', subtopicId).order('title')
+          supabase.from('subtopics').select('*, topics(id, name)').eq('id', subtopicId).single().abortSignal(controller.signal),
+          supabase.from('problems').select('*').eq('subtopic_id', subtopicId).order('title').abortSignal(controller.signal)
         ])
 
+        if (controller.signal.aborted) return
         if (subtopicResponse.error) throw subtopicResponse.error
         if (problemsResponse.error) throw problemsResponse.error
 
         setSubtopic(subtopicResponse.data)
         setProblems(problemsResponse.data)
       } catch (err) {
-        console.error('Error fetching data:', err)
+        if (!controller.signal.aborted) console.error('Error fetching data:', err)
       } finally {
-        setLoading(false)
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
 
-    queueMicrotask(fetchSubtopicAndProblems)
+    fetchSubtopicAndProblems()
+    return () => controller.abort()
   }, [subtopicId])
 
   const getDifficultyStyles = (difficulty) => {

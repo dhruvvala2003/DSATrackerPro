@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { ArrowUpRight, Code2 } from 'lucide-react'
+import { ArrowUpRight, Code2, BookOpen } from 'lucide-react'
 import { motion } from 'framer-motion'
 
 export default function SiteHeader() {
@@ -29,6 +29,16 @@ export default function SiteHeader() {
             }
           >
             Explore topics
+          </NavLink>
+          
+          <NavLink 
+            to="/notes" 
+            className={({ isActive }) => 
+              `flex items-center gap-1.5 text-sm font-medium transition-colors hover:text-indigo-600 ${isActive ? 'text-indigo-600' : 'text-slate-600'}`
+            }
+          >
+            <BookOpen size={15} />
+            Notes
           </NavLink>
           
           <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>

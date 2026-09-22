@@ -7,6 +7,10 @@ import ProblemsPage from './components/pages/ProblemsPage'
 import ProblemDetailPage from './components/pages/ProblemDetailPage'
 import AdminPanel from './components/pages/AdminPanel'
 import SolvePage from './components/pages/SolvePage'
+import SubjectsListPage from './components/pages/SubjectsListPage'
+import NotesListPage from './components/pages/NotesListPage'
+import NoteEditorPage from './components/pages/NoteEditorPage'
+import NoteReaderPage from './components/pages/NoteReaderPage'
 import SiteHeader from './components/common/SiteHeader'
 import './App.css'
 
@@ -26,6 +30,12 @@ function AnimatedRoutes() {
         <Route path="/subtopic/:subtopicId" element={<ProblemsPage />} />
         <Route path="/problem/:problemId" element={<ProblemDetailPage />} />
         <Route path="/admin/add" element={<AdminPanel />} />
+        <Route path="/notes" element={<SubjectsListPage />} />
+        <Route path="/notes/subject/:subjectId" element={<NotesListPage />} />
+        <Route path="/notes/subject/:subjectId/edit" element={<NoteEditorPage />} />
+        <Route path="/notes/subject/:subjectId/edit/:pageId" element={<NoteEditorPage />} />
+        <Route path="/notes/subject/:subjectId/read" element={<NoteReaderPage />} />
+        <Route path="/notes/subject/:subjectId/read/:pageId" element={<NoteReaderPage />} />
       </Routes>
     </AnimatePresence>
   )

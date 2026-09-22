@@ -81,27 +81,33 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController()
+
     const fetchLatestProblems = async () => {
-      // First try to fetch ordered by created_at
       const { data, error } = await supabase
         .from('problems')
         .select('id, title, status')
         .order('created_at', { ascending: false })
         .limit(5)
+        .abortSignal(controller.signal)
       
+      if (controller.signal.aborted) return
+
       if (!error && data) {
         setLatestProblems(data)
       } else if (error) {
-        // Fallback if created_at doesn't exist
         const { data: fallbackData } = await supabase
           .from('problems')
           .select('id, title, status')
           .order('id', { ascending: false })
           .limit(5)
-        if (fallbackData) setLatestProblems(fallbackData)
+          .abortSignal(controller.signal)
+        if (!controller.signal.aborted && fallbackData) setLatestProblems(fallbackData)
       }
     }
+
     fetchLatestProblems()
+    return () => controller.abort()
   }, [])
 
   return (

@@ -3,7 +3,7 @@ import { Search, Filter, Edit2, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabaseClient'
 import Loading from '../common/Loading'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -49,48 +49,54 @@ export default function SolvePage() {
   }
 
   useEffect(() => {
+    const controller = new AbortController()
+
     const loadContent = async () => {
       try {
-        const [{ data: topicData, error: topicError }, { data: subtopicData, error: subtopicError }] = await Promise.all([
-          supabase.from('topics').select('id, name, description').order('name'),
-          supabase.from('subtopics').select('id, topic_id, name, description').order('name'),
+        const [topicRes, subtopicRes, problemRes] = await Promise.all([
+          supabase.from('topics').select('id, name, description').order('name').abortSignal(controller.signal),
+          supabase.from('subtopics').select('id, topic_id, name, description').order('name').abortSignal(controller.signal),
+          supabase.from('problems').select('id, subtopic_id, title, difficulty, status, companies').order('title').abortSignal(controller.signal),
         ])
 
-        if (topicError || subtopicError) {
-          const requestError = topicError || subtopicError
+        if (controller.signal.aborted) return
+
+        if (topicRes.error || subtopicRes.error) {
+          const requestError = topicRes.error || subtopicRes.error
           setError(requestError.code === '42501' ? 'Supabase blocked the explorer read. Run the SELECT policies in supabase-policies.sql.' : requestError.message)
         }
 
-        const allProblemsResponse = await supabase
-          .from('problems')
-          .select('id, subtopic_id, title, difficulty, status, companies')
-          .order('title')
-
-        if (allProblemsResponse.error) {
-          if (allProblemsResponse.error.message?.toLowerCase().includes('companies')) {
+        if (problemRes.error) {
+          if (problemRes.error.message?.toLowerCase().includes('companies')) {
             const fallbackResponse = await supabase
               .from('problems')
               .select('id, subtopic_id, title, difficulty, status')
               .order('title')
-            setProblems(fallbackResponse.data || [])
+              .abortSignal(controller.signal)
+            if (!controller.signal.aborted) setProblems(fallbackResponse.data || [])
           } else {
-            setError(allProblemsResponse.error.code === '42501'
+            setError(problemRes.error.code === '42501'
               ? 'Supabase blocked the explorer read. Run the SELECT policies in supabase-policies.sql.'
-              : allProblemsResponse.error.message)
+              : problemRes.error.message)
           }
         } else {
-          setProblems(allProblemsResponse.data || [])
+          setProblems(problemRes.data || [])
         }
 
-        setTopics(topicData || [])
-        setSubtopics(subtopicData || [])
+        if (!controller.signal.aborted) {
+          setTopics(topicRes.data || [])
+          setSubtopics(subtopicRes.data || [])
+        }
       } catch (caughtError) {
+        if (controller.signal.aborted) return
         setError(caughtError?.message || 'Unable to load the question list.')
       } finally {
-        setLoading(false)
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
-    queueMicrotask(loadContent)
+
+    loadContent()
+    return () => controller.abort()
   }, [])
 
   const companyOptions = useMemo(() => {
@@ -247,13 +253,9 @@ export default function SolvePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              <AnimatePresence>
                 {filteredRows.map((row) => (
-                  <motion.tr 
+                  <tr 
                     key={row.id}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
                     className="hover:bg-slate-50 transition-colors group"
                   >
                     <td className="px-6 py-4">
@@ -304,9 +306,8 @@ export default function SolvePage() {
                         </button>
                       </div>
                     </td>
-                  </motion.tr>
+                  </tr>
                 ))}
-              </AnimatePresence>
               
               {filteredRows.length === 0 && (
                 <tr>

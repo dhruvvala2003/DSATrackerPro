@@ -25,25 +25,30 @@ export default function SubtopicsPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    const controller = new AbortController()
+
     const fetchTopicAndSubtopics = async () => {
       try {
         const [topicResponse, subtopicsResponse] = await Promise.all([
-          supabase.from('topics').select('*').eq('id', topicId).single(),
-          supabase.from('subtopics').select('*').eq('topic_id', topicId).order('name')
+          supabase.from('topics').select('*').eq('id', topicId).single().abortSignal(controller.signal),
+          supabase.from('subtopics').select('*').eq('topic_id', topicId).order('name').abortSignal(controller.signal)
         ])
         
+        if (controller.signal.aborted) return
         if (topicResponse.error) throw topicResponse.error
         if (subtopicsResponse.error) throw subtopicsResponse.error
 
         setTopic(topicResponse.data)
         
-        // Fetch stats for subtopics
         if (subtopicsResponse.data.length > 0) {
           const subtopicIds = subtopicsResponse.data.map(s => s.id)
           const { data: problemsData } = await supabase
             .from('problems')
             .select('subtopic_id, status')
             .in('subtopic_id', subtopicIds)
+            .abortSignal(controller.signal)
+
+          if (controller.signal.aborted) return
 
           const subtopicsWithStats = subtopicsResponse.data.map(subtopic => {
             const subtopicProblems = problemsData?.filter(p => p.subtopic_id === subtopic.id) || []
@@ -63,13 +68,14 @@ export default function SubtopicsPage() {
           setSubtopics([])
         }
       } catch (err) {
-        console.error('Error fetching data:', err)
+        if (!controller.signal.aborted) console.error('Error fetching data:', err)
       } finally {
-        setLoading(false)
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
 
-    queueMicrotask(fetchTopicAndSubtopics)
+    fetchTopicAndSubtopics()
+    return () => controller.abort()
   }, [topicId])
 
   if (loading) return <Loading />

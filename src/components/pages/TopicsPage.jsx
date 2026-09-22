@@ -23,23 +23,28 @@ export default function TopicsPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    const controller = new AbortController()
+
     const fetchTopics = async () => {
       try {
         const { data, error } = await supabase
           .from('topics')
           .select('*')
           .order('name')
+          .abortSignal(controller.signal)
         
+        if (controller.signal.aborted) return
         if (error) throw error
         setTopics(data)
       } catch (err) {
-        console.error('Error fetching topics:', err)
+        if (!controller.signal.aborted) console.error('Error fetching topics:', err)
       } finally {
-        setLoading(false)
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
 
-    queueMicrotask(fetchTopics)
+    fetchTopics()
+    return () => controller.abort()
   }, [])
 
   if (loading) return <Loading />

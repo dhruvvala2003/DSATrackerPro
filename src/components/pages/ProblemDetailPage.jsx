@@ -28,6 +28,8 @@ export default function ProblemDetailPage() {
   const [updating, setUpdating] = useState(false)
 
   useEffect(() => {
+    const controller = new AbortController()
+
     const loadProblem = async () => {
       try {
         const { data, error } = await supabase
@@ -35,17 +37,20 @@ export default function ProblemDetailPage() {
           .select('*, subtopic_id')
           .eq('id', problemId)
           .single()
+          .abortSignal(controller.signal)
 
+        if (controller.signal.aborted) return
         if (error) throw error
         setProblem(data)
       } catch (err) {
-        console.error('Error fetching problem:', err)
+        if (!controller.signal.aborted) console.error('Error fetching problem:', err)
       } finally {
-        setLoading(false)
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
 
-    queueMicrotask(loadProblem)
+    loadProblem()
+    return () => controller.abort()
   }, [problemId])
 
   const toggleStatus = async () => {

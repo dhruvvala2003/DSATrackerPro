@@ -120,7 +120,7 @@ export default function AdminPanel() {
   }
 
   useEffect(() => {
-    queueMicrotask(loadOptions)
+    loadOptions()
   }, [location.search])
 
   const updateField = (field, value) => {
