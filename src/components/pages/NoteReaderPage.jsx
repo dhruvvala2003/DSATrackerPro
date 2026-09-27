@@ -1,344 +1,364 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
-import { useEditor, EditorContent } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import Underline from '@tiptap/extension-underline'
-import { TextStyle } from '@tiptap/extension-text-style'
-import Color from '@tiptap/extension-color'
-import Highlight from '@tiptap/extension-highlight'
-import TextAlign from '@tiptap/extension-text-align'
-import Image from '@tiptap/extension-image'
-import { supabase } from '../../lib/supabaseClient'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
+import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, CircleAlert, Clock, FileText, ImageIcon, ListTree, Pencil, Plus, Video, X } from 'lucide-react'
 import Loading from '../common/Loading'
-import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, BookOpen, Edit2, List } from 'lucide-react'
-import { motion } from 'framer-motion'
+import ReadOnlyNote from '../notes/ReadOnlyNote'
+import { UNTITLED, fetchPage, fetchPageList, fetchSubject } from '../../lib/notesApi'
+import { collectHeadings, countMedia, countWords, isDocEmpty, readingMinutes } from '../../lib/noteContent'
 
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { staggerChildren: 0.08 } }
+const HEADER_OFFSET = 64
+
+const titleOf = (page) => (page?.title && page.title !== UNTITLED ? page.title : 'Untitled')
+
+function updatedLabel(dateStr) {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  const minutes = Math.floor((Date.now() - date) / 60000)
+  if (minutes < 1) return 'Updated just now'
+  if (minutes < 60) return `Updated ${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `Updated ${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `Updated ${days}d ago`
+  return `Updated ${date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`
 }
-const itemVariants = {
-  hidden: { opacity: 0, y: 15 },
-  visible: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100, damping: 15 } }
+
+function headingElements(root) {
+  return root ? Array.from(root.querySelectorAll('.ProseMirror > h1, .ProseMirror > h2, .ProseMirror > h3')) : []
+}
+
+function Lightbox({ image, onClose }) {
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-4 p-4 sm:p-10 bg-slate-950/85 backdrop-blur-sm cursor-zoom-out"
+      onClick={onClose}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <motion.img
+        src={image.src}
+        alt={image.alt}
+        className="max-w-full max-h-[85vh] rounded-xl object-contain shadow-2xl"
+        initial={{ scale: 0.94, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.97, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 260, damping: 26 }}
+      />
+      {image.alt && <p className="max-w-2xl text-center text-sm text-slate-200">{image.alt}</p>}
+      <button type="button" onClick={onClose} aria-label="Close image" className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center">
+        <X size={20} />
+      </button>
+    </motion.div>
+  )
+}
+
+function PageList({ pages, currentIndex, onSelect }) {
+  return (
+    <div className="space-y-0.5">
+      {pages.map((page, i) => (
+        <button
+          key={page.id}
+          type="button"
+          onClick={() => onSelect(i)}
+          className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-sm transition-colors ${
+            i === currentIndex ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+          }`}
+        >
+          <span className="w-5 shrink-0 text-right font-mono text-[11px] text-slate-400">{i + 1}</span>
+          <span className="truncate">{titleOf(page)}</span>
+        </button>
+      ))}
+    </div>
+  )
 }
 
 export default function NoteReaderPage() {
   const { subjectId, pageId } = useParams()
   const navigate = useNavigate()
-  const [subject, setSubject] = useState(null)
-  const [pages, setPages] = useState([])
-  const [currentIndex, setCurrentIndex] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [showToc, setShowToc] = useState(false)
-
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
-      Underline,
-      TextStyle,
-      Color,
-      Highlight.configure({ multicolor: true }),
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      Image.configure({ inline: false, allowBase64: true }),
-    ],
-    editable: false,
-    content: '',
-    editorProps: {
-      attributes: {
-        class: 'reader-content outline-none px-8 sm:px-12 py-8',
-      },
-    },
-  })
+  const [meta, setMeta] = useState(null) // { subject, pages } | { error }
+  const [contentById, setContentById] = useState({})
+  const [lightbox, setLightbox] = useState(null)
+  const [pagesOpen, setPagesOpen] = useState(false)
+  const [activeHeading, setActiveHeading] = useState(-1)
+  const articleRef = useRef(null)
+  const progressRef = useRef(null)
 
   useEffect(() => {
     const controller = new AbortController()
-
-    const fetchPages = async () => {
-      try {
-        const { data: subjectData } = await supabase
-          .from('notes_subjects')
-          .select('name')
-          .eq('id', subjectId)
-          .single()
-          .abortSignal(controller.signal)
-          
-        if (subjectData && !controller.signal.aborted) {
-          setSubject(subjectData)
-        }
-
-        const { data, error } = await supabase
-          .from('notes_pages')
-          .select('*')
-          .eq('subject_id', subjectId)
-          .order('page_order', { ascending: true })
-          .abortSignal(controller.signal)
-
-        if (controller.signal.aborted) return
-        if (error) throw error
-
-        const allPages = data || []
-        setPages(allPages)
-
-        if (pageId && allPages.length) {
-          const idx = allPages.findIndex(p => p.id === pageId)
-          if (idx !== -1) setCurrentIndex(idx)
-        }
-      } catch (err) {
-        if (!controller.signal.aborted) console.error('Error fetching notes:', err)
-      } finally {
-        if (!controller.signal.aborted) setLoading(false)
-      }
-    }
-
-    fetchPages()
+    Promise.all([fetchSubject(subjectId, controller.signal), fetchPageList(subjectId, { signal: controller.signal })])
+      .then(([subject, pages]) => { if (!controller.signal.aborted) setMeta({ subject, pages }) })
+      .catch((error) => { if (!controller.signal.aborted) setMeta({ error }) })
     return () => controller.abort()
-  }, [subjectId, pageId])
+  }, [subjectId])
 
-  // Update editor content when page changes
+  const pages = useMemo(() => meta?.pages || [], [meta])
+  const foundIndex = pageId ? pages.findIndex((p) => p.id === pageId) : 0
+  const index = Math.max(0, foundIndex)
+  const current = pages[index]
+  const currentId = current?.id
+  const row = currentId ? contentById[currentId] : undefined
+
   useEffect(() => {
-    if (!editor || !pages.length) return
-    const page = pages[currentIndex]
-    if (page?.content) {
-      editor.commands.setContent(page.content)
-    } else {
-      editor.commands.setContent('<p>This page is empty.</p>')
-    }
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [editor, pages, currentIndex])
+    if (!currentId || contentById[currentId]) return undefined
+    const controller = new AbortController()
+    fetchPage(currentId, controller.signal)
+      .then((page) => {
+        if (!controller.signal.aborted) setContentById((prev) => ({ ...prev, [currentId]: page || { missing: true } }))
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setContentById((prev) => ({ ...prev, [currentId]: { error } }))
+      })
+    return () => controller.abort()
+  }, [currentId, contentById])
 
-  // Keyboard navigation
+  const content = row && !row.error && !row.missing ? row.content : null
+  // Indices match headingElements(), so empty headings stay in the list and are just not shown.
+  const headings = useMemo(() => collectHeadings(content), [content])
+  const outlineSize = headings.filter((heading) => heading.text).length
+  const stats = useMemo(() => ({ words: countWords(content), ...countMedia(content) }), [content])
+
+  const goTo = useCallback((i) => {
+    const target = pages[i]
+    if (!target) return
+    setPagesOpen(false)
+    navigate(`/notes/subject/${subjectId}/read/${target.id}`, { replace: true })
+    window.scrollTo({ top: 0 })
+  }, [pages, subjectId, navigate])
+
+  // Reading progress bar + "On this page" highlighting
   useEffect(() => {
-    const handler = (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
-      if (e.key === 'ArrowLeft' && currentIndex > 0) {
-        setCurrentIndex(i => i - 1)
-      } else if (e.key === 'ArrowRight' && currentIndex < pages.length - 1) {
-        setCurrentIndex(i => i + 1)
-      }
+    let frame = 0
+    const update = () => {
+      frame = 0
+      const article = articleRef.current
+      if (!article) return
+      const rect = article.getBoundingClientRect()
+      const scrollable = rect.height - (window.innerHeight - HEADER_OFFSET)
+      const progress = scrollable > 0 ? Math.min(1, Math.max(0, (HEADER_OFFSET - rect.top) / scrollable)) : 1
+      if (progressRef.current) progressRef.current.style.transform = `scaleX(${progress})`
+      let active = -1
+      headingElements(article).forEach((el, i) => { if (el.getBoundingClientRect().top < 150) active = i })
+      setActiveHeading(active)
     }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [currentIndex, pages.length])
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update) }
+    schedule()
+    window.addEventListener('scroll', schedule, { passive: true })
+    window.addEventListener('resize', schedule)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('scroll', schedule)
+      window.removeEventListener('resize', schedule)
+    }
+  }, [currentId, row])
 
-  if (loading) return <Loading />
+  // ← / → turn pages
+  useEffect(() => {
+    const onKey = (event) => {
+      if (lightbox || event.altKey || event.ctrlKey || event.metaKey) return
+      if (event.target.closest?.('input, textarea, select, [contenteditable="true"]')) return
+      if (event.key === 'ArrowLeft' && index > 0) goTo(index - 1)
+      if (event.key === 'ArrowRight' && index < pages.length - 1) goTo(index + 1)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [index, pages.length, lightbox, goTo])
 
-  if (pages.length === 0) {
+  const closeLightbox = useCallback(() => setLightbox(null), [])
+
+  const openImage = (event) => {
+    const img = event.target.closest?.('img.note-image')
+    if (img) setLightbox({ src: img.currentSrc || img.src, alt: img.alt })
+  }
+
+  const scrollToHeading = (i) => {
+    headingElements(articleRef.current)[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  if (!meta) return <Loading />
+
+  if (meta.error || !meta.subject) {
     return (
-      <motion.div
-        className="w-full max-w-4xl mx-auto pb-20"
-        variants={containerVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <motion.div variants={itemVariants} className="flex flex-col items-center justify-center py-24 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
-          <BookOpen size={48} className="text-slate-300 mb-4" />
-          <h2 className="text-xl font-bold text-slate-900 mb-2">No pages to read</h2>
-          <p className="text-slate-500 mb-6">Create some notes first, then come back to read them.</p>
-          <Link to={`/notes/subject/${subjectId}/edit`} className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors shadow-md">
-            Create a Page
-          </Link>
-        </motion.div>
-      </motion.div>
+      <div className="max-w-xl mx-auto text-center py-24">
+        <CircleAlert size={40} className="mx-auto text-rose-400 mb-4" />
+        <h2 className="text-xl font-bold text-slate-900 mb-2">{meta.error ? 'Couldn’t load these notes' : 'Subject not found'}</h2>
+        <p className="text-slate-500 mb-6">{meta.error?.message || 'It may have been deleted.'}</p>
+        <Link to="/notes" className="text-indigo-600 font-semibold hover:text-indigo-700">Back to subjects</Link>
+      </div>
     )
   }
 
-  const currentPage = pages[currentIndex]
-
-  return (
-    <motion.div
-      className="w-full max-w-4xl mx-auto pb-20"
-      variants={containerVariants}
-      initial="hidden"
-      animate="visible"
-    >
-      {/* Top bar */}
-      <motion.div variants={itemVariants} className="flex items-center justify-between mb-6 gap-4">
-        <Link to={`/notes/subject/${subjectId}`} className="inline-flex items-center gap-2 text-slate-500 hover:text-indigo-600 transition-colors group text-sm font-medium">
-          <ArrowLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
-          Back to {subject ? subject.name : 'Subject'}
-        </Link>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowToc(!showToc)}
-            className={`h-9 px-3 rounded-lg flex items-center gap-1.5 text-sm font-medium border transition-colors ${
-              showToc ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            <List size={15} /> Contents
-          </button>
-          <Link
-            to={`/notes/subject/${subjectId}/edit/${currentPage.id}`}
-            className="h-9 px-3 rounded-lg flex items-center gap-1.5 text-sm font-medium bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
-          >
-            <Edit2 size={14} /> Edit
+  if (pages.length === 0) {
+    return (
+      <div className="w-full max-w-3xl mx-auto pb-20">
+        <div className="flex flex-col items-center justify-center py-24 px-6 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
+          <div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-400 flex items-center justify-center mb-4"><BookOpen size={30} /></div>
+          <h2 className="text-xl font-bold text-slate-900 mb-2">Nothing to read yet</h2>
+          <p className="text-slate-500 mb-6">Write the first page of {meta.subject.name}, then come back to read it here.</p>
+          <Link to={`/notes/subject/${subjectId}/edit`} className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md">
+            <Plus size={18} /> Write the first page
           </Link>
         </div>
-      </motion.div>
+      </div>
+    )
+  }
 
-      {/* Table of Contents */}
-      {showToc && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: 'auto' }}
-          exit={{ opacity: 0, height: 0 }}
-          className="mb-6 p-4 rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden"
+  const prev = pages[index - 1]
+  const next = pages[index + 1]
+  const loadingContent = !row
+  const empty = !loadingContent && !row.error && !row.missing && isDocEmpty(content)
+
+  return (
+    <motion.div className="w-full max-w-6xl mx-auto pb-24" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', stiffness: 120, damping: 18 }}>
+      <div className="fixed left-0 right-0 z-40 h-[3px] pointer-events-none" style={{ top: HEADER_OFFSET }}>
+        <div ref={progressRef} className="h-full origin-left bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-transform duration-75" style={{ transform: 'scaleX(0)' }} />
+      </div>
+
+      {/* Top bar */}
+      <div className="relative flex items-center justify-between gap-3 mb-6">
+        <Link to={`/notes/subject/${subjectId}`} className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors group min-w-0">
+          <ArrowLeft size={16} className="shrink-0 group-hover:-translate-x-1 transition-transform" />
+          <span className="truncate">Back to {meta.subject.name}</span>
+        </Link>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setPagesOpen((open) => !open)}
+            className={`lg:hidden h-9 px-3 rounded-xl inline-flex items-center gap-1.5 text-sm font-semibold border transition-colors ${pagesOpen ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600'}`}
+          >
+            <ListTree size={15} /> Pages
+          </button>
+          <Link
+            to={`/notes/subject/${subjectId}/edit/${currentId}`}
+            className="h-9 px-3.5 rounded-xl inline-flex items-center gap-1.5 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm transition-colors"
+          >
+            <Pencil size={14} /> Edit
+          </Link>
+        </div>
+        <AnimatePresence>
+          {pagesOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              className="lg:hidden absolute top-full right-0 mt-2 z-40 w-72 max-h-80 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl"
+            >
+              <PageList pages={pages} currentIndex={index} onSelect={goTo} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_248px] gap-8 xl:gap-12 items-start">
+        <article
+          ref={articleRef}
+          onClick={openImage}
+          className="min-w-0 rounded-3xl border border-slate-200 bg-white px-5 sm:px-12 lg:px-16 py-10 sm:py-14 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_24px_48px_-32px_rgba(15,23,42,0.25)]"
         >
-          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Table of Contents</h3>
-          <div className="space-y-1 max-h-64 overflow-y-auto">
-            {pages.map((page, idx) => (
-              <button
-                key={page.id}
-                onClick={() => { setCurrentIndex(idx); setShowToc(false) }}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                  idx === currentIndex
-                    ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                    : 'text-slate-600 hover:bg-slate-50 font-medium'
-                }`}
-              >
-                <span className="text-xs text-slate-400 w-6 shrink-0 font-mono">{idx + 1}.</span>
-                <span className="truncate">{page.title || 'Untitled'}</span>
-              </button>
-            ))}
+          <div className="max-w-[720px] mx-auto">
+            <div className="flex flex-wrap items-center gap-2 mb-5 text-xs font-semibold">
+              <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">{meta.subject.name}</span>
+              <span className="text-slate-400">Page {index + 1} of {pages.length}</span>
+            </div>
+            <h1 className="text-3xl sm:text-[2.75rem] font-extrabold tracking-tight leading-[1.15] text-slate-900">{titleOf(current)}</h1>
+            <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-slate-400">
+              <span className="inline-flex items-center gap-1.5"><Clock size={14} /> {readingMinutes(stats.words)} min read</span>
+              <span>{updatedLabel(row?.updated_at || current.updated_at)}</span>
+              {stats.images > 0 && <span className="inline-flex items-center gap-1.5"><ImageIcon size={14} /> {stats.images}</span>}
+              {stats.videos > 0 && <span className="inline-flex items-center gap-1.5"><Video size={14} /> {stats.videos}</span>}
+            </div>
+            <div className="my-8 h-px bg-gradient-to-r from-slate-200 via-slate-200 to-transparent" />
+
+            {loadingContent && (
+              <div className="space-y-3 animate-pulse">
+                <div className="h-4 rounded bg-slate-100" />
+                <div className="h-4 w-11/12 rounded bg-slate-100" />
+                <div className="h-4 w-4/5 rounded bg-slate-100" />
+              </div>
+            )}
+            {row?.error && (
+              <p className="flex items-center gap-2 text-rose-600"><CircleAlert size={18} /> Couldn’t load this page. {row.error.message}</p>
+            )}
+            {empty && (
+              <div className="text-center py-12">
+                <FileText size={32} className="mx-auto text-slate-300 mb-3" />
+                <p className="text-slate-500 mb-4">This page is empty.</p>
+                <Link to={`/notes/subject/${subjectId}/edit/${currentId}`} className="text-indigo-600 font-semibold hover:text-indigo-700">Start writing →</Link>
+              </div>
+            )}
+            {!loadingContent && !row.error && !row.missing && !empty && <ReadOnlyNote key={currentId} content={content} />}
           </div>
-        </motion.div>
+        </article>
+
+        <aside className="hidden lg:block sticky top-24 space-y-4">
+          {outlineSize > 1 && (
+            <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-4 shadow-sm">
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">On this page</p>
+              <nav className="space-y-0.5 max-h-[40vh] overflow-y-auto">
+                {headings.map((heading, i) => heading.text && (
+                  <button
+                    key={`${i}-${heading.text}`}
+                    type="button"
+                    onClick={() => scrollToHeading(i)}
+                    className={`block w-full text-left text-sm leading-snug py-1 border-l-2 transition-colors ${heading.level === 1 ? 'pl-3' : heading.level === 2 ? 'pl-5' : 'pl-7'} ${
+                      i === activeHeading ? 'border-indigo-500 text-indigo-700 font-semibold' : 'border-transparent text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    {heading.text}
+                  </button>
+                ))}
+              </nav>
+            </div>
+          )}
+          <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-3 shadow-sm">
+            <p className="px-2.5 pt-1 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Pages</p>
+            <div className="max-h-[40vh] overflow-y-auto">
+              <PageList pages={pages} currentIndex={index} onSelect={goTo} />
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      {/* Previous / next */}
+      <nav className="mt-8 grid sm:grid-cols-2 gap-4 lg:pr-[calc(248px+2rem)] xl:pr-[calc(248px+3rem)]" aria-label="Page navigation">
+        {prev ? (
+          <button type="button" onClick={() => goTo(index - 1)} className="group text-left p-5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all">
+            <span className="flex items-center gap-1 text-xs font-semibold text-slate-400 mb-1"><ChevronLeft size={14} className="group-hover:-translate-x-0.5 transition-transform" /> Previous</span>
+            <span className="block font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{titleOf(prev)}</span>
+          </button>
+        ) : <span className="hidden sm:block" />}
+        {next ? (
+          <button type="button" onClick={() => goTo(index + 1)} className="group text-right p-5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all">
+            <span className="flex items-center justify-end gap-1 text-xs font-semibold text-slate-400 mb-1">Next <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" /></span>
+            <span className="block font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{titleOf(next)}</span>
+          </button>
+        ) : (
+          <Link to={`/notes/subject/${subjectId}/edit`} className="group flex flex-col items-end justify-center p-5 rounded-2xl border border-dashed border-slate-300 text-right hover:border-indigo-300 hover:bg-indigo-50/40 transition-all">
+            <span className="text-xs font-semibold text-slate-400 mb-1">You’ve reached the end</span>
+            <span className="inline-flex items-center gap-1.5 font-bold text-indigo-600"><Plus size={16} /> Add another page</span>
+          </Link>
+        )}
+      </nav>
+
+      {pages.length > 1 && (
+        <p className="mt-6 text-center text-xs font-medium text-slate-400">
+          Use <kbd className="px-1.5 py-0.5 rounded-md bg-white border border-slate-200 font-mono text-[10px] text-slate-500">←</kbd>{' '}
+          <kbd className="px-1.5 py-0.5 rounded-md bg-white border border-slate-200 font-mono text-[10px] text-slate-500">→</kbd> to turn pages
+        </p>
       )}
 
-      {/* Page header */}
-      <motion.div variants={itemVariants} className="mb-2">
-        <div className="flex items-center gap-3 mb-4">
-          <span className="text-sm font-medium text-slate-400">
-            Page {currentIndex + 1} of {pages.length}
-          </span>
-        </div>
-        <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900 mb-2">
-          {currentPage.title || 'Untitled'}
-        </h1>
-      </motion.div>
-
-      {/* Content */}
-      <motion.div variants={itemVariants} className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm mb-8">
-        <EditorContent editor={editor} />
-      </motion.div>
-
-      {/* Pagination */}
-      <motion.div variants={itemVariants} className="flex items-center justify-between">
-        <button
-          onClick={() => setCurrentIndex(i => Math.max(0, i - 1))}
-          disabled={currentIndex === 0}
-          className={`group flex items-center gap-2 px-5 py-3 rounded-xl font-medium text-sm transition-all ${
-            currentIndex === 0
-              ? 'bg-slate-50 text-slate-300 cursor-not-allowed border border-slate-100'
-              : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 hover:border-slate-300 shadow-sm hover:shadow-md'
-          }`}
-        >
-          <ChevronLeft size={18} className={currentIndex > 0 ? 'group-hover:-translate-x-0.5 transition-transform' : ''} />
-          Previous
-        </button>
-
-        <div className="flex items-center gap-1.5">
-          {pages.length <= 10 ? (
-            pages.map((_, idx) => (
-              <button
-                key={idx}
-                onClick={() => setCurrentIndex(idx)}
-                className={`w-2.5 h-2.5 rounded-full transition-all ${
-                  idx === currentIndex
-                    ? 'bg-indigo-600 scale-125 shadow-sm'
-                    : 'bg-slate-200 hover:bg-slate-300'
-                }`}
-              />
-            ))
-          ) : (
-            <span className="text-sm font-semibold text-slate-500">
-              {currentIndex + 1} / {pages.length}
-            </span>
-          )}
-        </div>
-
-        <button
-          onClick={() => setCurrentIndex(i => Math.min(pages.length - 1, i + 1))}
-          disabled={currentIndex === pages.length - 1}
-          className={`group flex items-center gap-2 px-5 py-3 rounded-xl font-medium text-sm transition-all ${
-            currentIndex === pages.length - 1
-              ? 'bg-slate-50 text-slate-300 cursor-not-allowed border border-slate-100'
-              : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm hover:shadow-md'
-          }`}
-        >
-          Next
-          <ChevronRight size={18} className={currentIndex < pages.length - 1 ? 'group-hover:translate-x-0.5 transition-transform' : ''} />
-        </button>
-      </motion.div>
-
-      {/* Keyboard hint */}
-      <motion.div variants={itemVariants} className="mt-6 text-center">
-        <p className="text-xs text-slate-400 font-medium">
-          Use <kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px]">←</kbd> <kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[10px]">→</kbd> arrow keys to navigate
-        </p>
-      </motion.div>
-
-      {/* Reader Content Styles */}
-      <style dangerouslySetInnerHTML={{ __html: `
-        .reader-content {
-          font-size: 1.05rem;
-          line-height: 1.9;
-          color: #1e293b;
-        }
-        .reader-content > *:first-child { margin-top: 0; }
-        .reader-content h1 { font-size: 2em; font-weight: 800; margin: 1em 0 0.5em; color: #0f172a; letter-spacing: -0.025em; }
-        .reader-content h2 { font-size: 1.5em; font-weight: 700; margin: 0.8em 0 0.4em; color: #1e293b; }
-        .reader-content h3 { font-size: 1.25em; font-weight: 600; margin: 0.6em 0 0.3em; color: #334155; }
-        .reader-content p { margin: 0.6em 0; }
-        .reader-content ul { list-style: disc; padding-left: 1.5em; margin: 0.5em 0; }
-        .reader-content ol { list-style: decimal; padding-left: 1.5em; margin: 0.5em 0; }
-        .reader-content li { margin: 0.2em 0; }
-        .reader-content li p { margin: 0.15em 0; }
-        .reader-content blockquote {
-          border-left: 4px solid #6366f1;
-          padding: 0.75em 1em;
-          margin: 1em 0;
-          background: #f8fafc;
-          border-radius: 0 0.75em 0.75em 0;
-          color: #475569;
-          font-style: italic;
-        }
-        .reader-content pre {
-          background: #1e293b;
-          color: #e2e8f0;
-          padding: 1em 1.25em;
-          border-radius: 0.75em;
-          overflow-x: auto;
-          margin: 1em 0;
-          font-family: 'JetBrains Mono', 'Fira Code', monospace;
-          font-size: 0.875em;
-          line-height: 1.6;
-        }
-        .reader-content code {
-          background: #f1f5f9;
-          padding: 0.15em 0.4em;
-          border-radius: 0.375em;
-          font-size: 0.875em;
-          color: #e11d48;
-          font-family: 'JetBrains Mono', 'Fira Code', monospace;
-        }
-        .reader-content pre code { background: none; padding: 0; color: inherit; font-size: 1em; }
-        .reader-content img {
-          max-width: 100%;
-          height: auto;
-          border-radius: 0.75em;
-          margin: 1.5em auto;
-          display: block;
-          box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
-        }
-        .reader-content hr {
-          border: none;
-          border-top: 2px solid #e2e8f0;
-          margin: 2em 0;
-        }
-        .reader-content mark {
-          border-radius: 0.25em;
-          padding: 0.1em 0.2em;
-        }
-      `}} />
+      {createPortal(
+        <AnimatePresence>{lightbox && <Lightbox image={lightbox} onClose={closeLightbox} />}</AnimatePresence>,
+        document.body,
+      )}
     </motion.div>
   )
 }

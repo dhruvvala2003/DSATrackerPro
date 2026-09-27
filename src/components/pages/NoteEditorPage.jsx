@@ -1,348 +1,265 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
-import { useEditor, EditorContent } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import Underline from '@tiptap/extension-underline'
-import { TextStyle } from '@tiptap/extension-text-style'
-import Color from '@tiptap/extension-color'
-import Highlight from '@tiptap/extension-highlight'
-import TextAlign from '@tiptap/extension-text-align'
-import Image from '@tiptap/extension-image'
-import Placeholder from '@tiptap/extension-placeholder'
-import { supabase } from '../../lib/supabaseClient'
-import EditorToolbar from '../notes/EditorToolbar'
-import Loading from '../common/Loading'
-import { ArrowLeft, Check, Loader2, AlertCircle } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Link, NavLink, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { ArrowLeft, BookOpen, CircleAlert, FileText, LoaderCircle, Plus } from 'lucide-react'
+import NoteEditor from '../notes/NoteEditor'
+import { UNTITLED, clearDraft, createPage, fetchPage, fetchPageList, fetchSubject, readDraft } from '../../lib/notesApi'
+import { sameContent } from '../../lib/noteContent'
+import { toast } from '../../lib/toast'
 
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { staggerChildren: 0.08 } }
+// One insert per navigation, even when React StrictMode runs the effect twice.
+const pendingCreates = new Map()
+
+function createOnce(subjectId, key) {
+  if (!pendingCreates.has(key)) pendingCreates.set(key, createPage(subjectId))
+  return pendingCreates.get(key)
 }
-const itemVariants = {
-  hidden: { opacity: 0, y: 15 },
-  visible: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100, damping: 15 } }
+
+const displayTitle = (title) => (title && title !== UNTITLED ? title : '')
+
+// Prefer this browser's unsaved draft when it is newer than what the server has.
+function prepareInitial(page) {
+  const title = displayTitle(page.title)
+  const draft = readDraft(page.id)
+  if (draft) {
+    const newer = draft.savedAt > (Date.parse(page.updated_at) || 0)
+    const differs = (draft.title ?? '') !== title || !sameContent(draft.content, page.content)
+    if (newer && differs) return { title: draft.title ?? title, content: draft.content ?? null, restored: true }
+    clearDraft(page.id)
+  }
+  return { title, content: page.content ?? null, restored: false }
+}
+
+function PagesSidebar({ subject, subjectId, pages, currentId }) {
+  return (
+    <aside className="hidden xl:block sticky top-24">
+      <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-3 shadow-sm">
+        <Link to={`/notes/subject/${subjectId}`} className="block px-2 pt-1 pb-3 group">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Subject</p>
+          <p className="font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{subject?.name || '…'}</p>
+        </Link>
+        <nav className="space-y-0.5 max-h-[calc(100vh-18rem)] overflow-y-auto -mx-1 px-1" aria-label="Pages">
+          {pages.map((page, index) => (
+            <NavLink
+              key={page.id}
+              to={`/notes/subject/${subjectId}/edit/${page.id}`}
+              className={({ isActive }) => `flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm transition-colors ${
+                isActive || page.id === currentId ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              <span className="w-5 shrink-0 text-[11px] font-mono text-slate-400 text-right">{index + 1}</span>
+              <span className="truncate">{displayTitle(page.title) || 'Untitled'}</span>
+            </NavLink>
+          ))}
+        </nav>
+        <Link
+          to={`/notes/subject/${subjectId}/edit`}
+          className="mt-3 flex items-center justify-center gap-1.5 h-9 rounded-xl border border-dashed border-slate-300 text-sm font-semibold text-slate-500 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/50 transition-colors"
+        >
+          <Plus size={15} /> New page
+        </Link>
+      </div>
+    </aside>
+  )
+}
+
+function EditorSkeleton({ label }) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div className="h-12 border-b border-slate-100 bg-slate-50/60" />
+      <div className="px-6 sm:px-14 py-10 space-y-4 animate-pulse">
+        <div className="h-10 w-2/3 rounded-xl bg-slate-100" />
+        <div className="h-3 w-40 rounded bg-slate-100" />
+        <div className="pt-6 space-y-3">
+          <div className="h-4 rounded bg-slate-100" />
+          <div className="h-4 w-11/12 rounded bg-slate-100" />
+          <div className="h-4 w-4/5 rounded bg-slate-100" />
+        </div>
+        {label && (
+          <p className="pt-6 flex items-center gap-2 text-sm font-medium text-slate-400">
+            <LoaderCircle size={15} className="animate-spin" /> {label}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Problem({ title, message, action }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 px-6 text-center rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center mb-4"><CircleAlert size={26} /></div>
+      <h2 className="text-xl font-bold text-slate-900 mb-1.5">{title}</h2>
+      <p className="text-slate-500 max-w-sm mb-6">{message}</p>
+      {action}
+    </div>
+  )
 }
 
 export default function NoteEditorPage() {
   const { subjectId, pageId } = useParams()
   const navigate = useNavigate()
-  const [title, setTitle] = useState('')
-  const [saveStatus, setSaveStatus] = useState('idle')
-  const [pageData, setPageData] = useState(null)
-  const [loading, setLoading] = useState(!!pageId)
-  const [subjectName, setSubjectName] = useState('')
-  const saveTimer = useRef(null)
-  const pageDataRef = useRef(null)
+  const location = useLocation()
+  const [subject, setSubject] = useState(null)
+  const [pages, setPages] = useState([])
+  const [loaded, setLoaded] = useState(null) // { pageId, page, initial } | { pageId, missing } | { pageId, error }
+  const [createError, setCreateError] = useState(null) // { key, error }
+  const [attempt, setAttempt] = useState(0)
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
-      }),
-      Underline,
-      TextStyle,
-      Color,
-      Highlight.configure({ multicolor: true }),
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      Image.configure({ inline: false, allowBase64: true }),
-      Placeholder.configure({ placeholder: 'Start writing your notes here…' }),
-    ],
-    content: '',
-    editorProps: {
-      attributes: {
-        class: 'tiptap-content outline-none min-h-[500px] px-8 py-6',
-      },
-      handleDrop(view, event) {
-        const files = event.dataTransfer?.files
-        if (files?.length) {
-          event.preventDefault()
-          Array.from(files).forEach(file => {
-            if (file.type.startsWith('image/')) {
-              const reader = new FileReader()
-              reader.onload = (e) => {
-                view.dispatch(view.state.tr.replaceSelectionWith(
-                  view.state.schema.nodes.image.create({ src: e.target.result })
-                ))
-              }
-              reader.readAsDataURL(file)
-            }
-          })
-          return true
-        }
-        return false
-      },
-      handlePaste(view, event) {
-        const items = event.clipboardData?.items
-        if (items) {
-          for (const item of items) {
-            if (item.type.startsWith('image/')) {
-              event.preventDefault()
-              const file = item.getAsFile()
-              if (file) {
-                const reader = new FileReader()
-                reader.onload = (e) => {
-                  view.dispatch(view.state.tr.replaceSelectionWith(
-                    view.state.schema.nodes.image.create({ src: e.target.result })
-                  ))
-                }
-                reader.readAsDataURL(file)
-              }
-              return true
-            }
-          }
-        }
-        return false
-      },
-    },
-  })
-
-  // Load existing page & subject name
+  // Subject + page list for the sidebar
   useEffect(() => {
     const controller = new AbortController()
+    Promise.all([fetchSubject(subjectId, controller.signal), fetchPageList(subjectId, { signal: controller.signal })])
+      .then(([subjectRow, list]) => {
+        if (controller.signal.aborted) return
+        setSubject(subjectRow)
+        setPages((prev) => [...list, ...prev.filter((p) => !list.some((row) => row.id === p.id))])
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) console.error('Could not load subject:', error)
+      })
+    return () => controller.abort()
+  }, [subjectId])
 
-    const loadData = async () => {
-      try {
-        if (subjectId) {
-          const { data } = await supabase.from('notes_subjects').select('name').eq('id', subjectId).single().abortSignal(controller.signal)
-          if (data && !controller.signal.aborted) setSubjectName(data.name)
-        }
+  // "/edit" without a page id: create the page first, then open it. Typing only starts once the
+  // page exists, so every keystroke has a row to be saved into.
+  const createKey = `${subjectId}:${location.key}:${attempt}`
+  useEffect(() => {
+    if (pageId) return undefined
+    let cancelled = false
+    createOnce(subjectId, createKey)
+      .then((page) => {
+        if (cancelled) return
+        setPages((prev) => (prev.some((p) => p.id === page.id) ? prev : [...prev, page]))
+        navigate(`/notes/subject/${subjectId}/edit/${page.id}`, { replace: true, state: { justCreated: true } })
+      })
+      .catch((error) => {
+        if (!cancelled) setCreateError({ key: createKey, error })
+      })
+    return () => { cancelled = true }
+  }, [pageId, subjectId, createKey, navigate])
 
-        if (!pageId || !editor) {
-          setLoading(false)
+  // The page being edited
+  useEffect(() => {
+    if (!pageId) return undefined
+    const controller = new AbortController()
+    fetchPage(pageId, controller.signal)
+      .then((page) => {
+        if (controller.signal.aborted) return
+        if (!page) {
+          setLoaded({ pageId, missing: true })
           return
         }
-
-        const { data, error } = await supabase
-          .from('notes_pages')
-          .select('*')
-          .eq('id', pageId)
-          .single()
-          .abortSignal(controller.signal)
-
-        if (controller.signal.aborted) return
-        if (error) throw error
-        if (data) {
-          setPageData(data)
-          pageDataRef.current = data
-          setTitle(data.title || '')
-          if (data.content) editor.commands.setContent(data.content)
+        const initial = prepareInitial(page)
+        if (initial.restored) {
+          toast.info('Recovered your unsaved changes', {
+            description: 'Edits from your last session hadn’t reached the server yet. They’ve been restored and are saving now.',
+          })
         }
-      } catch (err) {
-        if (!controller.signal.aborted) console.error('Load error:', err)
-      } finally {
-        if (!controller.signal.aborted) setLoading(false)
-      }
-    }
-
-    loadData()
+        setLoaded({ pageId, page, initial })
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setLoaded({ pageId, error })
+      })
     return () => controller.abort()
-  }, [pageId, subjectId, editor])
+  }, [pageId, attempt])
 
-  // Save function
-  const saveContent = useCallback(async (currentTitle) => {
-    const t = currentTitle ?? title
-    if (!t.trim() || !editor || !subjectId) return
+  const handleTitleChange = useCallback((id, title) => {
+    setPages((prev) => prev.map((p) => (p.id === id ? { ...p, title: title.trim() || UNTITLED } : p)))
+  }, [])
 
-    setSaveStatus('saving')
-    const content = editor.getJSON()
+  const handleDiscard = useCallback((id) => {
+    setPages((prev) => prev.filter((p) => p.id !== id))
+  }, [])
 
-    try {
-      const current = pageDataRef.current
-      if (current?.id) {
-        const { error } = await supabase
-          .from('notes_pages')
-          .update({ title: t.trim(), content, updated_at: new Date().toISOString() })
-          .eq('id', current.id)
-        if (error) throw error
-      } else {
-        const { data: maxData } = await supabase
-          .from('notes_pages')
-          .select('page_order')
-          .order('page_order', { ascending: false })
-          .limit(1)
+  const current = loaded?.pageId === pageId ? loaded : null
+  const creationFailed = !pageId && createError?.key === createKey
 
-        const nextOrder = (maxData?.[0]?.page_order ?? -1) + 1
-
-        const { data, error } = await supabase
-          .from('notes_pages')
-          .insert({ subject_id: subjectId, title: t.trim(), content, page_order: nextOrder })
-          .select()
-          .single()
-
-        if (error) throw error
-        if (data) {
-          setPageData(data)
-          pageDataRef.current = data
-          window.history.replaceState(null, '', `/notes/subject/${subjectId}/edit/${data.id}`)
-        }
-      }
-      setSaveStatus('saved')
-      setTimeout(() => setSaveStatus((s) => s === 'saved' ? 'idle' : s), 2500)
-    } catch (err) {
-      console.error('Save error:', err)
-      setSaveStatus('error')
-      setTimeout(() => setSaveStatus('idle'), 3000)
-    }
-  }, [title, subjectId, editor])
-
-  // Auto-save on content change
-  useEffect(() => {
-    if (!editor) return
-
-    const handleUpdate = () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current)
-      saveTimer.current = setTimeout(() => {
-        if (title.trim()) saveContent()
-      }, 1500)
-    }
-
-    editor.on('update', handleUpdate)
-    return () => {
-      editor.off('update', handleUpdate)
-      if (saveTimer.current) clearTimeout(saveTimer.current)
-    }
-  }, [editor, saveContent, title])
-
-  // Save on title blur
-  const handleTitleBlur = () => {
-    if (title.trim() && (pageDataRef.current || editor?.getText().trim())) {
-      saveContent()
-    }
+  let body
+  if (!pageId) {
+    body = creationFailed ? (
+      <Problem
+        title="Couldn’t create the page"
+        message={createError.error?.message || 'Check your connection and try again.'}
+        action={<button type="button" onClick={() => setAttempt((n) => n + 1)} className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Try again</button>}
+      />
+    ) : (
+      <EditorSkeleton label="Creating a new page…" />
+    )
+  } else if (!current) {
+    body = <EditorSkeleton />
+  } else if (current.missing) {
+    body = (
+      <Problem
+        title="Page not found"
+        message="It may have been deleted."
+        action={<Link to={`/notes/subject/${subjectId}`} className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Back to subject</Link>}
+      />
+    )
+  } else if (current.error) {
+    body = (
+      <Problem
+        title="Couldn’t load this page"
+        message={current.error.message || 'Check your connection and try again.'}
+        action={<button type="button" onClick={() => setAttempt((n) => n + 1)} className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700">Try again</button>}
+      />
+    )
+  } else {
+    body = (
+      <NoteEditor
+        key={pageId}
+        page={current.page}
+        initialTitle={current.initial.title}
+        initialContent={current.initial.content}
+        restored={current.initial.restored}
+        justCreated={Boolean(location.state?.justCreated)}
+        onTitleChange={handleTitleChange}
+        onDiscard={handleDiscard}
+      />
+    )
   }
-
-  // Ctrl+S manual save
-  useEffect(() => {
-    const handler = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault()
-        if (title.trim()) saveContent()
-      }
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [saveContent, title])
-
-  if (loading) return <Loading />
 
   return (
     <motion.div
-      className="w-full max-w-5xl mx-auto pb-20"
-      variants={containerVariants}
-      initial="hidden"
-      animate="visible"
+      className="w-full max-w-7xl mx-auto pb-24"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: 'spring', stiffness: 120, damping: 18 }}
     >
-      {/* Header */}
-      <motion.div variants={itemVariants} className="mb-6">
-        <Link to={`/notes/subject/${subjectId}`} className="inline-flex items-center gap-2 text-slate-500 hover:text-indigo-600 transition-colors mb-6 group text-sm font-medium">
-          <ArrowLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
-          Back to {subjectName || 'Subject'}
-        </Link>
-      </motion.div>
+      <div className="grid xl:grid-cols-[220px_minmax(0,1fr)] gap-6 xl:gap-10 items-start">
+        <PagesSidebar subject={subject} subjectId={subjectId} pages={pages} currentId={pageId} />
 
-      {/* Title & Meta */}
-      <motion.div variants={itemVariants} className="mb-6 flex flex-col sm:flex-row sm:items-end gap-4">
-        <div className="flex-1">
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={handleTitleBlur}
-            placeholder="Untitled Page"
-            className="w-full text-3xl md:text-4xl font-extrabold text-slate-900 bg-transparent outline-none placeholder-slate-300 tracking-tight"
-          />
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-            saveStatus === 'saving' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
-            saveStatus === 'saved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' :
-            saveStatus === 'error' ? 'bg-rose-50 text-rose-600 border border-rose-200' :
-            'bg-slate-50 text-slate-400 border border-slate-200'
-          }`}>
-            {saveStatus === 'saving' && <><Loader2 size={12} className="animate-spin" /> Saving…</>}
-            {saveStatus === 'saved' && <><Check size={12} /> Saved</>}
-            {saveStatus === 'error' && <><AlertCircle size={12} /> Error</>}
-            {saveStatus === 'idle' && 'Auto-save on'}
+        <div className="min-w-0">
+          <div className="flex items-center justify-between gap-3 mb-5">
+            <Link to={`/notes/subject/${subjectId}`} className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors group min-w-0">
+              <ArrowLeft size={16} className="shrink-0 group-hover:-translate-x-1 transition-transform" />
+              <span className="truncate">Back to {subject?.name || 'subject'}</span>
+            </Link>
+            <div className="flex items-center gap-2 shrink-0">
+              <Link
+                to={`/notes/subject/${subjectId}/edit`}
+                className="xl:hidden h-9 px-3 rounded-xl inline-flex items-center gap-1.5 text-sm font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50"
+              >
+                <Plus size={15} /> Page
+              </Link>
+              {pageId && (
+                <Link
+                  to={`/notes/subject/${subjectId}/read/${pageId}`}
+                  className="h-9 px-3.5 rounded-xl inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors"
+                >
+                  <BookOpen size={15} /> Read mode
+                </Link>
+              )}
+            </div>
           </div>
+          {body}
+          {current?.page && (
+            <p className="mt-4 flex items-center justify-center gap-1.5 text-xs text-slate-400">
+              <FileText size={12} /> Changes save automatically · Ctrl+S saves instantly
+            </p>
+          )}
         </div>
-      </motion.div>
-
-      {/* Editor */}
-      <motion.div variants={itemVariants} className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-        <EditorToolbar editor={editor} />
-        <EditorContent editor={editor} />
-      </motion.div>
-
-      {/* TipTap Content Styles */}
-      <style dangerouslySetInnerHTML={{ __html: `
-        .tiptap-content {
-          font-size: 1rem;
-          line-height: 1.8;
-          color: #1e293b;
-        }
-        .tiptap-content > *:first-child { margin-top: 0; }
-        .tiptap-content h1 { font-size: 2em; font-weight: 800; margin: 1em 0 0.5em; color: #0f172a; letter-spacing: -0.025em; }
-        .tiptap-content h2 { font-size: 1.5em; font-weight: 700; margin: 0.8em 0 0.4em; color: #1e293b; }
-        .tiptap-content h3 { font-size: 1.25em; font-weight: 600; margin: 0.6em 0 0.3em; color: #334155; }
-        .tiptap-content p { margin: 0.6em 0; }
-        .tiptap-content ul { list-style: disc; padding-left: 1.5em; margin: 0.5em 0; }
-        .tiptap-content ol { list-style: decimal; padding-left: 1.5em; margin: 0.5em 0; }
-        .tiptap-content li { margin: 0.2em 0; }
-        .tiptap-content li p { margin: 0.15em 0; }
-        .tiptap-content blockquote {
-          border-left: 4px solid #6366f1;
-          padding: 0.75em 1em;
-          margin: 1em 0;
-          background: #f8fafc;
-          border-radius: 0 0.75em 0.75em 0;
-          color: #475569;
-          font-style: italic;
-        }
-        .tiptap-content pre {
-          background: #1e293b;
-          color: #e2e8f0;
-          padding: 1em 1.25em;
-          border-radius: 0.75em;
-          overflow-x: auto;
-          margin: 1em 0;
-          font-family: 'JetBrains Mono', 'Fira Code', monospace;
-          font-size: 0.9em;
-          line-height: 1.6;
-        }
-        .tiptap-content code {
-          background: #f1f5f9;
-          padding: 0.15em 0.4em;
-          border-radius: 0.375em;
-          font-size: 0.875em;
-          color: #e11d48;
-          font-family: 'JetBrains Mono', 'Fira Code', monospace;
-        }
-        .tiptap-content pre code { background: none; padding: 0; color: inherit; font-size: 1em; }
-        .tiptap-content img {
-          max-width: 100%;
-          height: auto;
-          border-radius: 0.75em;
-          margin: 1.5em auto;
-          display: block;
-          box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
-        }
-        .tiptap-content hr {
-          border: none;
-          border-top: 2px solid #e2e8f0;
-          margin: 2em 0;
-        }
-        .tiptap-content mark {
-          border-radius: 0.25em;
-          padding: 0.1em 0.2em;
-        }
-        .tiptap-content p.is-editor-empty:first-child::before {
-          content: attr(data-placeholder);
-          color: #94a3b8;
-          pointer-events: none;
-          float: left;
-          height: 0;
-        }
-      `}} />
+      </div>
     </motion.div>
   )
 }

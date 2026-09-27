@@ -78,7 +78,7 @@ drop policy if exists "Allow subject delete from app" on public.notes_subjects;
 create policy "Allow subject delete from app" on public.notes_subjects for delete to anon, authenticated using (true);
 
 -- 2. Pages table
-drop table if exists public.notes_pages cascade;
+-- (No "drop table" here: this file must be safe to re-run without deleting your notes.)
 create table if not exists public.notes_pages (
   id uuid default gen_random_uuid() primary key,
   subject_id uuid references public.notes_subjects(id) on delete cascade not null,
@@ -105,3 +105,35 @@ with check (title is not null and char_length(trim(title)) > 0);
 
 drop policy if exists "Allow note delete from app" on public.notes_pages;
 create policy "Allow note delete from app" on public.notes_pages for delete to anon, authenticated using (true);
+
+-- ============================================================
+-- 3. Photos & videos in notes (Supabase Storage)
+--    Safe to run on its own and to re-run. Creates a public bucket
+--    "notes-media" (50 MB per file) and lets the app upload to it.
+-- ============================================================
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'notes-media',
+  'notes-media',
+  true,
+  52428800,
+  array['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif',
+        'video/mp4', 'video/webm', 'video/quicktime', 'video/ogg']
+)
+on conflict (id) do update
+set public = excluded.public,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "Allow notes media to be read by app" on storage.objects;
+create policy "Allow notes media to be read by app" on storage.objects for select to anon, authenticated
+using (bucket_id = 'notes-media');
+
+drop policy if exists "Allow notes media upload from app" on storage.objects;
+create policy "Allow notes media upload from app" on storage.objects for insert to anon, authenticated
+with check (bucket_id = 'notes-media');
+
+drop policy if exists "Allow notes media delete from app" on storage.objects;
+create policy "Allow notes media delete from app" on storage.objects for delete to anon, authenticated
+using (bucket_id = 'notes-media');

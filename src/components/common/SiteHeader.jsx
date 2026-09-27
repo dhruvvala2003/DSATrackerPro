@@ -6,7 +6,7 @@ export default function SiteHeader() {
   const location = useLocation()
   
   return (
-    <header className="sticky top-0 z-50 w-full backdrop-blur-xl bg-white/70 border-b border-slate-200/60 shadow-sm">
+    <header className="sticky top-0 z-50 w-full backdrop-blur-xl bg-white/85 border-b border-slate-200/60 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         <NavLink 
           to="/" 
@@ -21,7 +21,7 @@ export default function SiteHeader() {
           </span>
         </NavLink>
         
-        <nav className="flex items-center gap-6" aria-label="Main navigation">
+        <nav className="flex items-center gap-4 sm:gap-6 whitespace-nowrap" aria-label="Main navigation">
           <NavLink 
             to="/solve" 
             className={({ isActive }) => 
@@ -41,7 +41,8 @@ export default function SiteHeader() {
             Notes
           </NavLink>
           
-          <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+          {/* Same destination as "Explore topics", so it's hidden where space is tight */}
+          <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="hidden sm:block">
             <NavLink 
               to="/solve" 
               className="group flex items-center gap-1 text-sm font-medium bg-slate-900 text-white px-4 py-2 rounded-full hover:bg-slate-800 transition-colors shadow-sm hover:shadow-md"

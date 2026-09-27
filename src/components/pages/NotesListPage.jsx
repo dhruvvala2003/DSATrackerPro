@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { supabase } from '../../lib/supabaseClient'
-import Loading from '../common/Loading'
-import { Plus, FileText, Trash2, BookOpen, Clock, ChevronRight, Search, ArrowLeft } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { ArrowLeft, BookOpen, Clock, FileText, ImageIcon, Pencil, Plus, Search, Trash2, Video } from 'lucide-react'
+import Loading from '../common/Loading'
+import { UNTITLED, deletePage, fetchPageList, fetchSubject } from '../../lib/notesApi'
+import { countMedia, extractText, findFirstImage } from '../../lib/noteContent'
+import { toast } from '../../lib/toast'
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -14,21 +16,13 @@ const itemVariants = {
   visible: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100, damping: 15 } }
 }
 
-function getContentPreview(content) {
-  if (!content?.content) return 'Empty page'
-  const text = content.content
-    .filter(n => n.type === 'paragraph' || n.type === 'heading')
-    .flatMap(n => (n.content || []).filter(c => c.type === 'text').map(c => c.text))
-    .join(' ')
-  return text.slice(0, 140) || 'Empty page'
-}
+const titleOf = (page) => (page.title && page.title !== UNTITLED ? page.title : 'Untitled')
 
 function formatDate(dateStr) {
   if (!dateStr) return ''
   const d = new Date(dateStr)
   const now = new Date()
-  const diffMs = now - d
-  const diffMin = Math.floor(diffMs / 60000)
+  const diffMin = Math.floor((now - d) / 60000)
   if (diffMin < 1) return 'Just now'
   if (diffMin < 60) return `${diffMin}m ago`
   const diffHr = Math.floor(diffMin / 60)
@@ -50,28 +44,18 @@ export default function NotesListPage() {
 
     const fetchData = async () => {
       try {
-        // Fetch Subject details
-        const { data: subjectData, error: subjectError } = await supabase
-          .from('notes_subjects')
-          .select('*')
-          .eq('id', subjectId)
-          .single()
-          .abortSignal(controller.signal)
-        
-        if (subjectError) throw subjectError
-        if (!controller.signal.aborted) setSubject(subjectData)
-
-        // Fetch Pages for this subject
-        const { data: pagesData, error: pagesError } = await supabase
-          .from('notes_pages')
-          .select('id, title, content, page_order, created_at, updated_at')
-          .eq('subject_id', subjectId)
-          .order('page_order', { ascending: true })
-          .abortSignal(controller.signal)
-
-        if (pagesError) throw pagesError
-        if (!controller.signal.aborted) setPages(pagesData || [])
-        
+        const [subjectData, pagesData] = await Promise.all([
+          fetchSubject(subjectId, controller.signal),
+          fetchPageList(subjectId, { withContent: true, signal: controller.signal }),
+        ])
+        if (controller.signal.aborted) return
+        setSubject(subjectData)
+        setPages(pagesData.map((page) => ({
+          ...page,
+          preview: extractText(page.content, 180),
+          cover: findFirstImage(page.content),
+          media: countMedia(page.content),
+        })))
       } catch (err) {
         if (!controller.signal.aborted) console.error('Error fetching data:', err)
       } finally {
@@ -83,22 +67,22 @@ export default function NotesListPage() {
     return () => controller.abort()
   }, [subjectId])
 
-  const handleDelete = async (pageId, pageTitle) => {
-    if (!window.confirm(`Delete "${pageTitle || 'Untitled'}"? This cannot be undone.`)) return
+  const handleDelete = async (page) => {
+    if (!window.confirm(`Delete "${titleOf(page)}"? This cannot be undone.`)) return
+    const previous = pages
+    setPages((current) => current.filter((p) => p.id !== page.id))
     try {
-      const { error } = await supabase.from('notes_pages').delete().eq('id', pageId)
-      if (error) throw error
-      setPages((current) => current.filter((p) => p.id !== pageId))
+      await deletePage(page.id)
+      toast.success('Page deleted')
     } catch (err) {
       console.error('Delete error:', err)
+      setPages(previous)
+      toast.error('Couldn’t delete the page', { description: err.message })
     }
   }
 
-  const filteredPages = pages.filter(p => 
-    !search.trim() || 
-    (p.title || '').toLowerCase().includes(search.toLowerCase()) ||
-    getContentPreview(p.content).toLowerCase().includes(search.toLowerCase())
-  )
+  const query = search.trim().toLowerCase()
+  const filteredPages = pages.filter((p) => !query || titleOf(p).toLowerCase().includes(query) || p.preview.toLowerCase().includes(query))
 
   if (loading) return <Loading />
   if (!subject) return <div className="text-center py-20">Subject not found.</div>
@@ -122,7 +106,7 @@ export default function NotesListPage() {
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-slate-200 shadow-sm mb-5">
             <span className="w-2 h-2 rounded-full bg-violet-500" />
-            <span className="text-sm font-semibold text-slate-700">Project</span>
+            <span className="text-sm font-semibold text-slate-700">Subject</span>
           </div>
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-slate-900 mb-3">
             {subject.name}
@@ -178,7 +162,7 @@ export default function NotesListPage() {
           </h2>
           <p className="text-slate-500 mb-6 max-w-sm">
             {pages.length === 0
-              ? `Create your first page in ${subject.name}.`
+              ? `Create your first page in ${subject.name}. Add text, code, photos and videos — everything saves automatically.`
               : 'Try a different search term.'}
           </p>
           {pages.length === 0 && (
@@ -189,55 +173,65 @@ export default function NotesListPage() {
         </motion.div>
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredPages.map((page, idx) => (
-            <motion.div key={page.id} variants={itemVariants}>
-              <div className="group relative flex flex-col h-full p-5 rounded-2xl bg-white border border-slate-200 shadow-sm hover:shadow-lg hover:border-violet-300 transition-all duration-300 overflow-hidden">
-                <div className="absolute top-0 right-0 w-28 h-28 bg-gradient-to-bl from-violet-500/10 to-transparent rounded-full blur-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
+          {filteredPages.map((page) => {
+            const pageNumber = pages.indexOf(page) + 1
+            return (
+              <motion.div key={page.id} variants={itemVariants}>
+                <div className="group relative flex flex-col h-full rounded-2xl bg-white border border-slate-200 shadow-sm hover:shadow-lg hover:border-violet-300 transition-all duration-300 overflow-hidden">
+                  <Link to={`/notes/subject/${subject.id}/read/${page.id}`} className="flex flex-col flex-1" aria-label={`Read ${titleOf(page)}`}>
+                    {page.cover ? (
+                      <div className="h-36 overflow-hidden bg-slate-100">
+                        <img src={page.cover} alt="" loading="lazy" className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500" />
+                      </div>
+                    ) : (
+                      <div className="absolute top-0 right-0 w-28 h-28 bg-gradient-to-bl from-violet-500/10 to-transparent rounded-full blur-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
+                    )}
+                    <div className="flex flex-col flex-1 p-5 relative">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-bold text-slate-300 select-none">PAGE {pageNumber}</span>
+                        <span className="flex items-center gap-2 text-xs font-semibold text-slate-400">
+                          {page.media.images > 0 && <span className="inline-flex items-center gap-1"><ImageIcon size={12} /> {page.media.images}</span>}
+                          {page.media.videos > 0 && <span className="inline-flex items-center gap-1"><Video size={12} /> {page.media.videos}</span>}
+                        </span>
+                      </div>
+                      <h3 className="text-lg font-bold text-slate-900 mb-2 group-hover:text-violet-600 transition-colors line-clamp-2">
+                        {titleOf(page)}
+                      </h3>
+                      <p className="text-sm text-slate-500 leading-relaxed line-clamp-3 flex-1">
+                        {page.preview || <span className="italic text-slate-400">Empty page</span>}
+                      </p>
+                    </div>
+                  </Link>
 
-                <div className="flex items-center justify-between mb-4 relative z-10">
-                  <span className="text-xs font-bold text-slate-300 select-none">
-                    PAGE {idx + 1}
-                  </span>
-                </div>
-
-                <Link to={`/notes/subject/${subject.id}/edit/${page.id}`} className="relative z-10">
-                  <h3 className="text-lg font-bold text-slate-900 mb-2 group-hover:text-violet-600 transition-colors line-clamp-2">
-                    {page.title || 'Untitled'}
-                  </h3>
-                </Link>
-
-                <p className="text-sm text-slate-500 leading-relaxed line-clamp-3 mb-4 flex-1 relative z-10">
-                  {getContentPreview(page.content)}
-                </p>
-
-                <div className="flex items-center justify-between pt-3 border-t border-slate-100 relative z-10">
-                  <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
-                    <Clock size={12} />
-                    {formatDate(page.updated_at || page.created_at)}
+                  <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
+                      <Clock size={12} />
+                      {formatDate(page.updated_at || page.created_at)}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(page)}
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                        title="Delete page"
+                        aria-label={`Delete ${titleOf(page)}`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                      <Link
+                        to={`/notes/subject/${subject.id}/edit/${page.id}`}
+                        className="h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 transition-colors"
+                      >
+                        <Pencil size={12} /> Edit
+                      </Link>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleDelete(page.id, page.title) }}
-                      className="w-7 h-7 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-100 flex items-center justify-center text-rose-400 hover:text-rose-600 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                    <Link
-                      to={`/notes/subject/${subject.id}/edit/${page.id}`}
-                      className="w-7 h-7 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 flex items-center justify-center text-indigo-500 hover:text-indigo-700 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Edit"
-                    >
-                      <ChevronRight size={13} />
-                    </Link>
-                  </div>
                 </div>
-              </div>
-            </motion.div>
-          ))}
+              </motion.div>
+            )
+          })}
         </div>
       )}
     </motion.div>
   )
 }
-

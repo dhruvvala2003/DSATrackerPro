@@ -1,188 +1,344 @@
-import { useState, useRef, useEffect } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useEditorState } from '@tiptap/react'
 import {
-  Bold, Italic, Underline as UnderlineIcon, Strikethrough,
-  Heading1, Heading2, Heading3, Pilcrow,
-  AlignLeft, AlignCenter, AlignRight, AlignJustify,
-  List, ListOrdered,
-  ImageIcon, Code2, Quote, Minus,
-  Undo2, Redo2, Palette, Highlighter
+  AlignCenter, AlignJustify, AlignLeft, AlignRight, Baseline, Bold, ChevronDown, Code2, Flame, Highlighter,
+  ImageIcon, Info, Italic, Lightbulb, Link2, List, ListChecks, ListOrdered, Minus, Quote, Redo2,
+  Table, TriangleAlert, Underline, Undo2, Video,
 } from 'lucide-react'
+import { runInsert } from './editorCommands'
+import { applyLink } from './linkUtils'
+import { getLastCodeLanguage } from './lowlight'
 
 const TEXT_COLORS = [
-  '#000000', '#374151', '#6B7280', '#9CA3AF',
-  '#EF4444', '#F97316', '#EAB308', '#84CC16',
-  '#22C55E', '#14B8A6', '#06B6D4', '#3B82F6',
-  '#6366F1', '#8B5CF6', '#A855F7', '#EC4899',
+  '#0F172A', '#475569', '#94A3B8', '#DC2626', '#EA580C', '#CA8A04',
+  '#16A34A', '#0D9488', '#0284C7', '#4F46E5', '#7C3AED', '#DB2777',
+]
+const HIGHLIGHT_COLORS = ['#FEF08A', '#FED7AA', '#FECACA', '#BBF7D0', '#A5F3FC', '#BFDBFE', '#DDD6FE', '#FBCFE8']
+
+const BLOCK_TYPES = [
+  { value: 'p', label: 'Text', run: (c) => c.setParagraph() },
+  { value: 'h1', label: 'Heading 1', run: (c) => c.setHeading({ level: 1 }) },
+  { value: 'h2', label: 'Heading 2', run: (c) => c.setHeading({ level: 2 }) },
+  { value: 'h3', label: 'Heading 3', run: (c) => c.setHeading({ level: 3 }) },
 ]
 
-const HIGHLIGHT_COLORS = [
-  '#FEF08A', '#FED7AA', '#FECACA', '#BBF7D0',
-  '#A7F3D0', '#BFDBFE', '#C7D2FE', '#DDD6FE',
-  '#FBCFE8', '#E2E8F0',
+const ALIGNMENTS = [
+  { value: 'left', label: 'Left', icon: AlignLeft },
+  { value: 'center', label: 'Center', icon: AlignCenter },
+  { value: 'right', label: 'Right', icon: AlignRight },
+  { value: 'justify', label: 'Justify', icon: AlignJustify },
 ]
 
-function ColorPicker({ colors, activeColor, onSelect, icon: Icon, title }) {
+const CALLOUTS = [
+  { value: 'note', label: 'Note', icon: Info, className: 'text-indigo-600' },
+  { value: 'tip', label: 'Tip', icon: Lightbulb, className: 'text-emerald-600' },
+  { value: 'warning', label: 'Warning', icon: TriangleAlert, className: 'text-amber-600' },
+  { value: 'important', label: 'Important', icon: Flame, className: 'text-rose-600' },
+]
+
+const TABLE_ACTIONS = [
+  { label: 'Add row above', run: (c) => c.addRowBefore() },
+  { label: 'Add row below', run: (c) => c.addRowAfter() },
+  { label: 'Add column left', run: (c) => c.addColumnBefore() },
+  { label: 'Add column right', run: (c) => c.addColumnAfter() },
+  { label: 'Toggle header row', run: (c) => c.toggleHeaderRow() },
+  { label: 'Delete row', run: (c) => c.deleteRow(), danger: true },
+  { label: 'Delete column', run: (c) => c.deleteColumn(), danger: true },
+  { label: 'Delete table', run: (c) => c.deleteTable(), danger: true },
+]
+
+const keepEditorFocus = (event) => event.preventDefault()
+
+function ToolButton({ onClick, active, accent, disabled, title, children }) {
+  const tone = active
+    ? 'bg-indigo-100 text-indigo-700'
+    : accent
+      ? 'text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700'
+      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      aria-pressed={active}
+      disabled={disabled}
+      onMouseDown={keepEditorFocus}
+      onClick={onClick}
+      className={`h-8 min-w-8 px-1.5 shrink-0 rounded-lg inline-flex items-center justify-center gap-1 text-sm font-medium transition-colors disabled:opacity-30 disabled:pointer-events-none ${tone}`}
+    >
+      {children}
+    </button>
+  )
+}
+
+function Separator() {
+  return <span className="w-px h-5 bg-slate-200 mx-0.5 shrink-0" aria-hidden="true" />
+}
+
+// Panels render in a portal with fixed positioning, so the toolbar can scroll horizontally
+// on phones without clipping them.
+function Dropdown({ title, active, button, children }) {
   const [open, setOpen] = useState(false)
-  const ref = useRef(null)
+  const triggerRef = useRef(null)
+  const panelRef = useRef(null)
 
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+  const place = useCallback(() => {
+    const trigger = triggerRef.current?.getBoundingClientRect()
+    const panel = panelRef.current
+    if (!trigger || !panel) return
+    const maxLeft = window.innerWidth - panel.offsetWidth - 8
+    panel.style.top = `${trigger.bottom + 8}px`
+    panel.style.left = `${Math.max(8, Math.min(trigger.left, maxLeft))}px`
   }, [])
 
+  useLayoutEffect(() => {
+    if (open) place()
+  }, [open, place])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const onPointer = (event) => {
+      if (!triggerRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) setOpen(false)
+    }
+    const onKey = (event) => { if (event.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onPointer)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => {
+      document.removeEventListener('mousedown', onPointer)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+    }
+  }, [open, place])
+
   return (
-    <div className="relative" ref={ref}>
-      <button
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={() => setOpen(!open)}
-        title={title}
-        className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-          open ? 'bg-indigo-100 text-indigo-700' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-        }`}
-      >
-        <Icon size={16} />
-      </button>
-      {open && (
-        <div className="absolute top-full left-0 mt-2 p-2.5 bg-white rounded-xl border border-slate-200 shadow-xl z-50 grid grid-cols-4 gap-1.5 min-w-[148px]">
-          {colors.map((color) => (
-            <button
-              key={color}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => { onSelect(color); setOpen(false) }}
-              className={`w-7 h-7 rounded-lg border-2 transition-transform hover:scale-110 ${
-                activeColor === color ? 'border-indigo-500 scale-110 shadow-sm' : 'border-transparent hover:border-slate-300'
-              }`}
-              style={{ backgroundColor: color }}
-            />
-          ))}
-          <button
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => { onSelect(null); setOpen(false) }}
-            className="w-7 h-7 rounded-lg border-2 border-slate-200 flex items-center justify-center text-slate-400 text-xs font-bold hover:scale-110 transition-transform hover:border-rose-300 hover:text-rose-500"
-            title="Remove"
-          >
-            ✕
-          </button>
-        </div>
+    <div className="shrink-0" ref={triggerRef}>
+      <ToolButton title={title} active={active || open} onClick={() => setOpen((value) => !value)}>
+        {button}
+        <ChevronDown size={12} className="opacity-50 -ml-0.5" />
+      </ToolButton>
+      {open && createPortal(
+        <div
+          ref={panelRef}
+          className="fixed z-[70] max-w-[calc(100vw-16px)] rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl shadow-slate-900/10"
+          onMouseDown={(event) => { if (event.target.tagName !== 'INPUT') event.preventDefault() }}
+        >
+          {children(() => setOpen(false))}
+        </div>,
+        document.body,
       )}
     </div>
   )
 }
 
-export default function EditorToolbar({ editor }) {
-  const [imageUrl, setImageUrl] = useState('')
-  const [showImageInput, setShowImageInput] = useState(false)
-  const imageRef = useRef(null)
-
-  useEffect(() => {
-    const handler = (e) => { if (imageRef.current && !imageRef.current.contains(e.target)) setShowImageInput(false) }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  if (!editor) return null
-
-  const addImage = () => {
-    if (imageUrl.trim()) {
-      editor.chain().focus().setImage({ src: imageUrl.trim() }).run()
-      setImageUrl('')
-      setShowImageInput(false)
-    }
-  }
-
-  const Btn = ({ onClick, active, children, title }) => (
+function MenuItem({ onClick, active, danger, icon: Icon, iconClassName = '', children }) {
+  return (
     <button
-      onMouseDown={(e) => e.preventDefault()}
+      type="button"
       onClick={onClick}
-      title={title}
-      className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
-        active
-          ? 'bg-indigo-100 text-indigo-700 shadow-sm'
-          : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+      className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-sm text-left whitespace-nowrap transition-colors ${
+        active ? 'bg-indigo-50 text-indigo-700 font-semibold' : danger ? 'text-rose-600 hover:bg-rose-50' : 'text-slate-700 hover:bg-slate-50'
       }`}
     >
+      {Icon && <Icon size={15} className={iconClassName} />}
       {children}
     </button>
   )
+}
 
-  const Sep = () => <div className="w-px h-6 bg-slate-200 mx-1 shrink-0" />
+function Swatches({ colors, active, onSelect, onClear, clearLabel }) {
+  return (
+    <div className="w-[196px]">
+      <div className="grid grid-cols-6 gap-1.5 p-1">
+        {colors.map((color) => (
+          <button
+            key={color}
+            type="button"
+            title={color}
+            onClick={() => onSelect(color)}
+            className={`w-7 h-7 rounded-lg border-2 transition-transform hover:scale-110 ${
+              active?.toLowerCase() === color.toLowerCase() ? 'border-indigo-500 scale-110' : 'border-white shadow-[0_0_0_1px_#e2e8f0]'
+            }`}
+            style={{ backgroundColor: color }}
+          />
+        ))}
+      </div>
+      <button type="button" onClick={onClear} className="mt-1 w-full px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-50 text-left">
+        {clearLabel}
+      </button>
+    </div>
+  )
+}
+
+function LinkPanel({ editor, currentHref, close }) {
+  const [href, setHref] = useState(currentHref || '')
+
+  const apply = () => {
+    applyLink(editor, href)
+    close()
+  }
 
   return (
-    <div className="sticky top-16 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 py-2">
-      <div className="flex items-center gap-0.5 flex-wrap">
-        <Btn onClick={() => editor.chain().focus().undo().run()} title="Undo"><Undo2 size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().redo().run()} title="Redo"><Redo2 size={16} /></Btn>
-        <Sep />
-
-        <Btn onClick={() => editor.chain().focus().setParagraph().run()} active={editor.isActive('paragraph')} title="Paragraph"><Pilcrow size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} active={editor.isActive('heading', { level: 1 })} title="Heading 1"><Heading1 size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} active={editor.isActive('heading', { level: 2 })} title="Heading 2"><Heading2 size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} active={editor.isActive('heading', { level: 3 })} title="Heading 3"><Heading3 size={16} /></Btn>
-        <Sep />
-
-        <Btn onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')} title="Bold (Ctrl+B)"><Bold size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive('italic')} title="Italic (Ctrl+I)"><Italic size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().toggleUnderline().run()} active={editor.isActive('underline')} title="Underline (Ctrl+U)"><UnderlineIcon size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().toggleStrike().run()} active={editor.isActive('strike')} title="Strikethrough"><Strikethrough size={16} /></Btn>
-        <Sep />
-
-        <ColorPicker
-          colors={TEXT_COLORS}
-          activeColor={editor.getAttributes('textStyle').color}
-          onSelect={(c) => c ? editor.chain().focus().setColor(c).run() : editor.chain().focus().unsetColor().run()}
-          icon={Palette}
-          title="Text color"
-        />
-        <ColorPicker
-          colors={HIGHLIGHT_COLORS}
-          activeColor={editor.getAttributes('highlight').color}
-          onSelect={(c) => c ? editor.chain().focus().toggleHighlight({ color: c }).run() : editor.chain().focus().unsetHighlight().run()}
-          icon={Highlighter}
-          title="Highlight"
-        />
-        <Sep />
-
-        <Btn onClick={() => editor.chain().focus().setTextAlign('left').run()} active={editor.isActive({ textAlign: 'left' })} title="Align left"><AlignLeft size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().setTextAlign('center').run()} active={editor.isActive({ textAlign: 'center' })} title="Center"><AlignCenter size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().setTextAlign('right').run()} active={editor.isActive({ textAlign: 'right' })} title="Align right"><AlignRight size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().setTextAlign('justify').run()} active={editor.isActive({ textAlign: 'justify' })} title="Justify"><AlignJustify size={16} /></Btn>
-        <Sep />
-
-        <Btn onClick={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive('bulletList')} title="Bullet list"><List size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().toggleOrderedList().run()} active={editor.isActive('orderedList')} title="Numbered list"><ListOrdered size={16} /></Btn>
-        <Sep />
-
-        <Btn onClick={() => editor.chain().focus().toggleBlockquote().run()} active={editor.isActive('blockquote')} title="Blockquote"><Quote size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().toggleCodeBlock().run()} active={editor.isActive('codeBlock')} title="Code block"><Code2 size={16} /></Btn>
-        <Btn onClick={() => editor.chain().focus().setHorizontalRule().run()} title="Divider"><Minus size={16} /></Btn>
-
-        <div className="relative" ref={imageRef}>
-          <Btn onClick={() => setShowImageInput(!showImageInput)} title="Insert image"><ImageIcon size={16} /></Btn>
-          {showImageInput && (
-            <div className="absolute top-full right-0 mt-2 p-3 bg-white rounded-xl border border-slate-200 shadow-xl z-50 w-80">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Image URL</p>
-              <div className="flex gap-2">
-                <input
-                  type="url"
-                  value={imageUrl}
-                  onChange={(e) => setImageUrl(e.target.value)}
-                  placeholder="https://example.com/image.jpg"
-                  className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all"
-                  onKeyDown={(e) => e.key === 'Enter' && addImage()}
-                  autoFocus
-                />
-                <button
-                  onClick={addImage}
-                  className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
-                >
-                  Insert
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+    <form className="w-72 p-1.5" onSubmit={(event) => { event.preventDefault(); apply() }}>
+      <p className="px-1 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Link</p>
+      <input
+        autoFocus
+        value={href}
+        onChange={(event) => setHref(event.target.value)}
+        placeholder="Paste or type a link…"
+        className="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+      />
+      <div className="flex justify-end gap-2 mt-2">
+        {currentHref && (
+          <button type="button" onClick={() => { editor.chain().focus().extendMarkRange('link').unsetLink().run(); close() }} className="h-8 px-3 rounded-lg text-sm font-medium text-rose-600 hover:bg-rose-50">
+            Remove
+          </button>
+        )}
+        <button type="submit" className="h-8 px-4 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700">
+          Apply
+        </button>
       </div>
+    </form>
+  )
+}
+
+function readToolbarState({ editor }) {
+  if (!editor) return null
+  const heading = [1, 2, 3].find((level) => editor.isActive('heading', { level }))
+  return {
+    block: heading ? `h${heading}` : 'p',
+    bold: editor.isActive('bold'),
+    italic: editor.isActive('italic'),
+    underline: editor.isActive('underline'),
+    link: editor.isActive('link') ? editor.getAttributes('link').href || '' : null,
+    color: editor.getAttributes('textStyle').color || null,
+    highlight: editor.isActive('highlight') ? editor.getAttributes('highlight').color || '#FEF08A' : null,
+    align: ['center', 'right', 'justify'].find((value) => editor.isActive({ textAlign: value })) || 'left',
+    bulletList: editor.isActive('bulletList'),
+    orderedList: editor.isActive('orderedList'),
+    taskList: editor.isActive('taskList'),
+    blockquote: editor.isActive('blockquote'),
+    codeBlock: editor.isActive('codeBlock'),
+    callout: editor.isActive('callout') ? editor.getAttributes('callout').variant : null,
+    table: editor.isActive('table'),
+    canUndo: editor.can().undo(),
+    canRedo: editor.can().redo(),
+  }
+}
+
+export default function EditorToolbar({ editor, onOpenMedia, status }) {
+  const s = useEditorState({ editor, selector: readToolbarState })
+  if (!editor || !s) return null
+
+  const run = (fn) => fn(editor.chain().focus()).run()
+  const blockLabel = BLOCK_TYPES.find((type) => type.value === s.block)?.label || 'Text'
+  const AlignIcon = ALIGNMENTS.find((a) => a.value === s.align)?.icon || AlignLeft
+
+  return (
+    <div className="sticky top-16 z-30 rounded-t-3xl border-b border-slate-200/80 bg-white/90 backdrop-blur-xl flex items-center gap-2 pl-2 pr-3 sm:px-3 py-2">
+      {/* One swipeable row on phones; wraps on wider screens. */}
+      <div className="flex-1 min-w-0 flex items-center gap-0.5 overflow-x-auto sm:flex-wrap sm:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <ToolButton title="Undo (Ctrl+Z)" disabled={!s.canUndo} onClick={() => run((c) => c.undo())}><Undo2 size={16} /></ToolButton>
+        <ToolButton title="Redo (Ctrl+Shift+Z)" disabled={!s.canRedo} onClick={() => run((c) => c.redo())}><Redo2 size={16} /></ToolButton>
+        <Separator />
+
+        <Dropdown title="Text style" button={<span className="w-[68px] text-left truncate">{blockLabel}</span>}>
+          {(close) => BLOCK_TYPES.map((type) => (
+            <MenuItem key={type.value} active={s.block === type.value} onClick={() => { run(type.run); close() }}>
+              <span className={type.value === 'h1' ? 'text-lg font-bold' : type.value === 'h2' ? 'text-base font-bold' : type.value === 'h3' ? 'font-semibold' : ''}>{type.label}</span>
+            </MenuItem>
+          ))}
+        </Dropdown>
+        <Separator />
+
+        <ToolButton title="Bold (Ctrl+B)" active={s.bold} onClick={() => run((c) => c.toggleBold())}><Bold size={16} /></ToolButton>
+        <ToolButton title="Italic (Ctrl+I)" active={s.italic} onClick={() => run((c) => c.toggleItalic())}><Italic size={16} /></ToolButton>
+        <ToolButton title="Underline (Ctrl+U)" active={s.underline} onClick={() => run((c) => c.toggleUnderline())}><Underline size={16} /></ToolButton>
+        {/* Strikethrough and inline code live in the selection menu (select text) to keep this row short. */}
+        <Dropdown title="Link" active={s.link !== null} button={<Link2 size={16} />}>
+          {(close) => <LinkPanel editor={editor} currentHref={s.link} close={close} />}
+        </Dropdown>
+
+        <Dropdown title="Text colour" active={!!s.color} button={<Baseline size={16} style={s.color ? { color: s.color } : undefined} />}>
+          {(close) => (
+            <Swatches
+              colors={TEXT_COLORS}
+              active={s.color}
+              clearLabel="Default colour"
+              onSelect={(color) => { run((c) => c.setColor(color)); close() }}
+              onClear={() => { run((c) => c.unsetColor()); close() }}
+            />
+          )}
+        </Dropdown>
+        <Dropdown title="Highlight" active={!!s.highlight} button={<Highlighter size={16} />}>
+          {(close) => (
+            <Swatches
+              colors={HIGHLIGHT_COLORS}
+              active={s.highlight}
+              clearLabel="No highlight"
+              onSelect={(color) => { run((c) => c.setHighlight({ color })); close() }}
+              onClear={() => { run((c) => c.unsetHighlight()); close() }}
+            />
+          )}
+        </Dropdown>
+        <Separator />
+
+        <Dropdown title="Alignment" active={s.align !== 'left'} button={<AlignIcon size={16} />}>
+          {(close) => ALIGNMENTS.map(({ value, label, icon }) => (
+            <MenuItem key={value} icon={icon} active={s.align === value} onClick={() => { run((c) => c.setTextAlign(value)); close() }}>{label}</MenuItem>
+          ))}
+        </Dropdown>
+        <ToolButton title="Bulleted list" active={s.bulletList} onClick={() => run((c) => c.toggleBulletList())}><List size={16} /></ToolButton>
+        <ToolButton title="Numbered list" active={s.orderedList} onClick={() => run((c) => c.toggleOrderedList())}><ListOrdered size={16} /></ToolButton>
+        <ToolButton title="Checklist" active={s.taskList} onClick={() => run((c) => c.toggleTaskList())}><ListChecks size={16} /></ToolButton>
+        <Separator />
+
+        <ToolButton title="Quote" active={s.blockquote} onClick={() => run((c) => c.toggleBlockquote())}><Quote size={16} /></ToolButton>
+        <ToolButton
+          title="Code block"
+          active={s.codeBlock}
+          onClick={() => run((c) => (s.codeBlock ? c.toggleCodeBlock() : c.setCodeBlock({ language: getLastCodeLanguage() })))}
+        >
+          <Code2 size={16} />
+        </ToolButton>
+        <Dropdown title="Callout box" active={!!s.callout} button={<Lightbulb size={16} />}>
+          {(close) => (
+            <>
+              {CALLOUTS.map(({ value, label, icon, className }) => (
+                <MenuItem key={value} icon={icon} iconClassName={className} active={s.callout === value} onClick={() => { run((c) => c.setCallout({ variant: value })); close() }}>
+                  {label}
+                </MenuItem>
+              ))}
+              {s.callout && <MenuItem danger onClick={() => { run((c) => c.unsetCallout()); close() }}>Remove callout</MenuItem>}
+            </>
+          )}
+        </Dropdown>
+        <Dropdown title="Table" active={s.table} button={<Table size={16} />}>
+          {(close) => (s.table
+            ? TABLE_ACTIONS.map((action) => (
+                <MenuItem key={action.label} danger={action.danger} onClick={() => { run(action.run); close() }}>{action.label}</MenuItem>
+              ))
+            : (
+              <MenuItem icon={Table} onClick={() => { runInsert(editor, (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true })); close() }}>
+                Insert 3 × 3 table
+              </MenuItem>
+            ))}
+        </Dropdown>
+        <ToolButton title="Divider" onClick={() => runInsert(editor, (c) => c.setHorizontalRule())}><Minus size={16} /></ToolButton>
+        <Separator />
+
+        {/* YouTube / Vimeo links are in the Video dialog (and the "/" menu). */}
+        <ToolButton accent title="Add photo" onClick={() => onOpenMedia('image')}>
+          <ImageIcon size={16} />
+        </ToolButton>
+        <ToolButton accent title="Add video or YouTube link" onClick={() => onOpenMedia('video')}>
+          <Video size={16} />
+        </ToolButton>
+      </div>
+      {status && <div className="shrink-0 flex items-center">{status}</div>}
     </div>
   )
 }
