@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useEditorState } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { NodeSelection } from '@tiptap/pm/state'
-import { Bold, Check, Code, Heading2, Highlighter, Italic, Link2, Strikethrough, Underline, X } from 'lucide-react'
+import { Bold, Check, Code, Heading1, Highlighter, Italic, Link2, Strikethrough, Underline, X } from 'lucide-react'
 import { applyLink } from './linkUtils'
 
 // Mounted on <body> so it floats above the sticky site header.
@@ -26,7 +26,8 @@ function readSelectionState({ editor }) {
     strike: editor.isActive('strike'),
     code: editor.isActive('code'),
     highlight: editor.isActive('highlight'),
-    heading: editor.isActive('heading', { level: 2 }),
+    heading: editor.isActive('heading', { level: 1 }), // Changed to level 1 per user request
+    fontSize: editor.getAttributes('textStyle')?.fontSize || '18px',
     link: editor.isActive('link') ? editor.getAttributes('link').href || '' : null,
   }
 }
@@ -49,6 +50,8 @@ function BubbleButton({ active, title, onClick, children }) {
   )
 }
 
+const FONT_SIZES = ['14px', '16px', '18px', '20px', '24px', '28px', '32px']
+
 export default function SelectionMenu({ editor }) {
   const [linkDraft, setLinkDraft] = useState(null) // null = buttons, string = editing a link
   const s = useEditorState({ editor, selector: readSelectionState })
@@ -66,7 +69,7 @@ export default function SelectionMenu({ editor }) {
       <div className="flex items-center gap-0.5 rounded-xl bg-slate-900/95 backdrop-blur p-1 shadow-2xl shadow-slate-900/30 ring-1 ring-white/10">
         {linkDraft === null ? (
           <>
-            <BubbleButton title="Heading" active={s.heading} onClick={() => run((c) => c.toggleHeading({ level: 2 }))}><Heading2 size={15} /></BubbleButton>
+            <BubbleButton title="Heading 1" active={s.heading} onClick={() => run((c) => c.toggleHeading({ level: 1 }))}><Heading1 size={15} /></BubbleButton>
             <span className="w-px h-5 bg-white/15 mx-0.5" />
             <BubbleButton title="Bold" active={s.bold} onClick={() => run((c) => c.toggleBold())}><Bold size={15} /></BubbleButton>
             <BubbleButton title="Italic" active={s.italic} onClick={() => run((c) => c.toggleItalic())}><Italic size={15} /></BubbleButton>
@@ -74,6 +77,18 @@ export default function SelectionMenu({ editor }) {
             <BubbleButton title="Strikethrough" active={s.strike} onClick={() => run((c) => c.toggleStrike())}><Strikethrough size={15} /></BubbleButton>
             <BubbleButton title="Inline code" active={s.code} onClick={() => run((c) => c.toggleCode())}><Code size={15} /></BubbleButton>
             <BubbleButton title="Highlight" active={s.highlight} onClick={() => run((c) => c.toggleHighlight({ color: '#FEF08A' }))}><Highlighter size={15} /></BubbleButton>
+            <span className="w-px h-5 bg-white/15 mx-0.5" />
+            <select
+              value={s.fontSize}
+              onChange={(e) => run((c) => c.setFontSize(e.target.value))}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="bg-transparent text-slate-200 text-sm font-medium outline-none cursor-pointer hover:bg-white/10 hover:text-white px-1.5 py-1 rounded-lg h-8 border-none"
+              title="Font Size"
+            >
+              {FONT_SIZES.map(size => (
+                <option key={size} value={size} className="bg-slate-800 text-white">{size.replace('px', '')}</option>
+              ))}
+            </select>
             <span className="w-px h-5 bg-white/15 mx-0.5" />
             <BubbleButton title="Link" active={s.link !== null} onClick={() => setLinkDraft(s.link || '')}><Link2 size={15} /></BubbleButton>
           </>

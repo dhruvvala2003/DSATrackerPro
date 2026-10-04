@@ -12,6 +12,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { lowlight } from '../lowlight'
 import CodeBlockView from '../nodeviews/CodeBlockView'
 import { Callout } from './callout'
+import { FontSize } from './fontSize'
 import { Embed, NoteImage, Video } from './media'
 import { MediaDropPaste } from './mediaDropPaste'
 import { SlashCommand } from './slashCommand'
@@ -56,6 +57,7 @@ export function createNoteExtensions({ editable = true, onOpenMedia, onFiles } =
     Video,
     Embed,
     Callout,
+    FontSize,
     TaskList,
     TaskItem.configure({ nested: true }),
     TableKit.configure({ table: { resizable: false } }),

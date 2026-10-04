@@ -39,18 +39,27 @@ function PagesSidebar({ subject, subjectId, pages, currentId }) {
           <p className="font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{subject?.name || '…'}</p>
         </Link>
         <nav className="space-y-0.5 max-h-[calc(100vh-18rem)] overflow-y-auto -mx-1 px-1" aria-label="Pages">
-          {pages.map((page, index) => (
-            <NavLink
-              key={page.id}
-              to={`/notes/subject/${subjectId}/edit/${page.id}`}
-              className={({ isActive }) => `flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm transition-colors ${
-                isActive || page.id === currentId ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-              }`}
-            >
-              <span className="w-5 shrink-0 text-[11px] font-mono text-slate-400 text-right">{index + 1}</span>
-              <span className="truncate">{displayTitle(page.title) || 'Untitled'}</span>
-            </NavLink>
-          ))}
+          {pages.map((page, index) => {
+            const title = displayTitle(page.title) || 'Untitled'
+            return (
+              <div key={page.id} className="relative group">
+                <NavLink
+                  to={`/notes/subject/${subjectId}/edit/${page.id}`}
+                  className={({ isActive }) => `flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm transition-colors ${
+                    isActive || page.id === currentId ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                  }`}
+                >
+                  <span className="w-5 shrink-0 text-[11px] font-mono text-slate-400 text-right">{index + 1}</span>
+                  <span className="truncate">{title}</span>
+                </NavLink>
+                {/* Rich Hover Tooltip displaying full header */}
+                <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block z-50 w-max max-w-sm p-2.5 bg-slate-900 text-white text-xs rounded-xl shadow-xl border border-slate-700 whitespace-normal break-words">
+                  <div className="text-[10px] uppercase font-bold text-slate-400 mb-0.5 tracking-wider">Page Header</div>
+                  <div className="font-medium text-slate-100 leading-snug">{title}</div>
+                </div>
+              </div>
+            )
+          })}
         </nav>
         <Link
           to={`/notes/subject/${subjectId}/edit`}

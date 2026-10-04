@@ -64,19 +64,28 @@ function Lightbox({ image, onClose }) {
 function PageList({ pages, currentIndex, onSelect }) {
   return (
     <div className="space-y-0.5">
-      {pages.map((page, i) => (
-        <button
-          key={page.id}
-          type="button"
-          onClick={() => onSelect(i)}
-          className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-sm transition-colors ${
-            i === currentIndex ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-          }`}
-        >
-          <span className="w-5 shrink-0 text-right font-mono text-[11px] text-slate-400">{i + 1}</span>
-          <span className="truncate">{titleOf(page)}</span>
-        </button>
-      ))}
+      {pages.map((page, i) => {
+        const title = titleOf(page)
+        return (
+          <div key={page.id} className="relative group">
+            <button
+              type="button"
+              onClick={() => onSelect(i)}
+              className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-sm transition-colors ${
+                i === currentIndex ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              <span className="w-5 shrink-0 text-right font-mono text-[11px] text-slate-400">{i + 1}</span>
+              <span className="truncate">{title}</span>
+            </button>
+            {/* Rich Hover Tooltip displaying full header */}
+            <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block z-50 w-max max-w-sm p-2.5 bg-slate-900 text-white text-xs rounded-xl shadow-xl border border-slate-700 whitespace-normal break-words">
+              <div className="text-[10px] uppercase font-bold text-slate-400 mb-0.5 tracking-wider">Page Header</div>
+              <div className="font-medium text-slate-100 leading-snug">{title}</div>
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -257,7 +266,35 @@ export default function NoteReaderPage() {
         </AnimatePresence>
       </div>
 
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_248px] gap-8 xl:gap-12 items-start">
+      <div className="grid lg:grid-cols-[248px_minmax(0,1fr)] gap-8 xl:gap-12 items-start">
+        <aside className="hidden lg:block sticky top-24 space-y-4">
+          {outlineSize > 1 && (
+            <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-4 shadow-sm">
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">On this page</p>
+              <nav className="space-y-0.5 max-h-[40vh] overflow-y-auto">
+                {headings.map((heading, i) => heading.text && (
+                  <button
+                    key={`${i}-${heading.text}`}
+                    type="button"
+                    onClick={() => scrollToHeading(i)}
+                    className={`block w-full text-left text-sm leading-snug py-1 border-l-2 transition-colors ${heading.level === 1 ? 'pl-3' : heading.level === 2 ? 'pl-5' : 'pl-7'} ${
+                      i === activeHeading ? 'border-indigo-500 text-indigo-700 font-semibold' : 'border-transparent text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    {heading.text}
+                  </button>
+                ))}
+              </nav>
+            </div>
+          )}
+          <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-3 shadow-sm">
+            <p className="px-2.5 pt-1 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Pages</p>
+            <div className="max-h-[40vh] overflow-y-auto">
+              <PageList pages={pages} currentIndex={index} onSelect={goTo} />
+            </div>
+          </div>
+        </aside>
+
         <article
           ref={articleRef}
           onClick={openImage}
@@ -297,38 +334,10 @@ export default function NoteReaderPage() {
             {!loadingContent && !row.error && !row.missing && !empty && <ReadOnlyNote key={currentId} content={content} />}
           </div>
         </article>
-
-        <aside className="hidden lg:block sticky top-24 space-y-4">
-          {outlineSize > 1 && (
-            <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-4 shadow-sm">
-              <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">On this page</p>
-              <nav className="space-y-0.5 max-h-[40vh] overflow-y-auto">
-                {headings.map((heading, i) => heading.text && (
-                  <button
-                    key={`${i}-${heading.text}`}
-                    type="button"
-                    onClick={() => scrollToHeading(i)}
-                    className={`block w-full text-left text-sm leading-snug py-1 border-l-2 transition-colors ${heading.level === 1 ? 'pl-3' : heading.level === 2 ? 'pl-5' : 'pl-7'} ${
-                      i === activeHeading ? 'border-indigo-500 text-indigo-700 font-semibold' : 'border-transparent text-slate-500 hover:text-slate-900'
-                    }`}
-                  >
-                    {heading.text}
-                  </button>
-                ))}
-              </nav>
-            </div>
-          )}
-          <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-3 shadow-sm">
-            <p className="px-2.5 pt-1 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Pages</p>
-            <div className="max-h-[40vh] overflow-y-auto">
-              <PageList pages={pages} currentIndex={index} onSelect={goTo} />
-            </div>
-          </div>
-        </aside>
       </div>
 
       {/* Previous / next */}
-      <nav className="mt-8 grid sm:grid-cols-2 gap-4 lg:pr-[calc(248px+2rem)] xl:pr-[calc(248px+3rem)]" aria-label="Page navigation">
+      <nav className="mt-8 grid sm:grid-cols-2 gap-4 lg:pl-[calc(248px+2rem)] xl:pl-[calc(248px+3rem)]" aria-label="Page navigation">
         {prev ? (
           <button type="button" onClick={() => goTo(index - 1)} className="group text-left p-5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all">
             <span className="flex items-center gap-1 text-xs font-semibold text-slate-400 mb-1"><ChevronLeft size={14} className="group-hover:-translate-x-0.5 transition-transform" /> Previous</span>
