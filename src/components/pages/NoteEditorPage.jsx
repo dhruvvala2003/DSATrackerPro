@@ -45,6 +45,7 @@ function PagesSidebar({ subject, subjectId, pages, currentId }) {
               <div key={page.id} className="relative group">
                 <NavLink
                   to={`/notes/subject/${subjectId}/edit/${page.id}`}
+                  title={title}
                   className={({ isActive }) => `flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm transition-colors ${
                     isActive || page.id === currentId ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                   }`}
@@ -52,11 +53,6 @@ function PagesSidebar({ subject, subjectId, pages, currentId }) {
                   <span className="w-5 shrink-0 text-[11px] font-mono text-slate-400 text-right">{index + 1}</span>
                   <span className="truncate">{title}</span>
                 </NavLink>
-                {/* Rich Hover Tooltip displaying full header */}
-                <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block z-50 w-max max-w-sm p-2.5 bg-slate-900 text-white text-xs rounded-xl shadow-xl border border-slate-700 whitespace-normal break-words">
-                  <div className="text-[10px] uppercase font-bold text-slate-400 mb-0.5 tracking-wider">Page Header</div>
-                  <div className="font-medium text-slate-100 leading-snug">{title}</div>
-                </div>
               </div>
             )
           })}
