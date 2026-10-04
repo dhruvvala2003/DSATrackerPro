@@ -1,9 +1,9 @@
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import { ArrowUpRight, Code2, BookOpen } from 'lucide-react'
 import { motion } from 'framer-motion'
 
 export default function SiteHeader() {
-  const location = useLocation()
+  
   
   return (
     <header className="sticky top-0 z-50 w-full backdrop-blur-xl bg-white/85 border-b border-slate-200/60 shadow-sm">

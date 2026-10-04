@@ -99,7 +99,7 @@ export default function ProblemDetailPage() {
     { id: 'optimal', label: 'Optimal', icon: Zap, color: 'text-emerald-500', bg: 'bg-emerald-50' }
   ]
 
-  const activeTab = tabs.find(t => t.id === solutionTab)
+  tabs.find(t => t.id === solutionTab)
   const codeContent = (solutionTab === 'brute' ? problem.brute_force_code : solutionTab === 'good' ? problem.good_approach_code : problem.optimal_approach_code) || (solutionTab === 'optimal' ? problem.code_snippet : '') || '// No code provided for this approach yet.'
 
   return (

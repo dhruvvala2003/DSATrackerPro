@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, BarChart3, Check, CircleDot, Code2, Layers3, Sparkles, Flame, Building2 } from 'lucide-react'
+import { ArrowRight, BarChart3, Check, Code2, Sparkles, Building2 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { supabase } from '../../lib/supabaseClient'
 
@@ -68,7 +68,7 @@ const itemVariants = {
 }
 
 export default function HomePage() {
-  const randomQuote = useMemo(() => quotes[Math.floor(Math.random() * quotes.length)], [])
+  const [randomQuote] = useState(() => quotes[Math.floor(Math.random() * quotes.length)])
   const [latestProblems, setLatestProblems] = useState([])
 
   const dailyData = useMemo(() => {
@@ -168,7 +168,7 @@ export default function HomePage() {
           <div className="flex-1 overflow-y-auto pr-2 relative z-10 custom-scrollbar">
             <div className="relative pl-6 space-y-5 before:absolute before:inset-y-2 before:left-2.5 before:w-px before:bg-gradient-to-b before:from-indigo-400 before:to-slate-200">
               {latestProblems.length > 0 ? (
-                latestProblems.map((problem, i) => (
+                latestProblems.map((problem) => (
                   <Link to={`/problem/${problem.id}`} key={problem.id} className="flex items-center gap-4 relative group cursor-pointer">
                     <div className={`absolute -left-[1.6rem] w-3 h-3 rounded-full ${problem.status === 'Completed' ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : problem.status === 'In Progress' ? 'bg-amber-500' : 'bg-slate-300'} border-2 border-white z-10 group-hover:scale-125 transition-transform`} />
                     <div className={`p-2.5 rounded-lg transition-colors ${problem.status === 'Completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600'}`}>
