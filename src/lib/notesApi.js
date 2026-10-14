@@ -76,17 +76,32 @@ export async function createPage(subjectId) {
     .limit(1)
   if (orderError) throw orderError
 
-  const { data, error } = await supabase
+  const { data: authData } = await supabase.auth.getUser()
+  const payload = {
+    subject_id: subjectId,
+    title: UNTITLED,
+    content: null,
+    page_order: (last?.[0]?.page_order ?? -1) + 1,
+    updated_at: new Date().toISOString(),
+  }
+  if (authData?.user?.id) {
+    payload.user_id = authData.user.id
+  }
+
+  let { data, error } = await supabase
     .from('notes_pages')
-    .insert({
-      subject_id: subjectId,
-      title: UNTITLED,
-      content: null,
-      page_order: (last?.[0]?.page_order ?? -1) + 1,
-      updated_at: new Date().toISOString(),
-    })
+    .insert(payload)
     .select()
     .single()
+
+  // Gracefully fallback if user_id column doesn't exist yet before SQL migration is executed
+  if (error && error.message?.includes('column "user_id" of relation')) {
+    delete payload.user_id
+    const retry = await supabase.from('notes_pages').insert(payload).select().single()
+    data = retry.data
+    error = retry.error
+  }
+
   if (error) throw error
   return data
 }

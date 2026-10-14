@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Search, Filter, Edit2, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabaseClient'
+import { useAuth } from '../../context/AuthContext'
 import Loading from '../common/Loading'
 import { motion } from 'framer-motion'
 
@@ -19,6 +20,7 @@ const itemVariants = {
 }
 
 export default function SolvePage() {
+  const { isAdmin } = useAuth()
   const [topics, setTopics] = useState([])
   const [subtopics, setSubtopics] = useState([])
   const [problems, setProblems] = useState([])
@@ -171,11 +173,13 @@ export default function SolvePage() {
           </motion.p>
         </div>
         
-        <motion.div variants={itemVariants}>
-          <Link to="/admin/add" className="inline-flex items-center justify-center h-12 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-all shadow-[0_0_15px_rgba(79,70,229,0.2)] hover:-translate-y-0.5">
-            Add Problem
-          </Link>
-        </motion.div>
+        {isAdmin && (
+          <motion.div variants={itemVariants}>
+            <Link to="/admin/add" className="inline-flex items-center justify-center h-12 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-all shadow-[0_0_15px_rgba(79,70,229,0.2)] hover:-translate-y-0.5">
+              Add Problem
+            </Link>
+          </motion.div>
+        )}
       </div>
 
       {error && (
@@ -249,7 +253,7 @@ export default function SolvePage() {
                 <th className="px-6 py-4 font-medium hidden md:table-cell w-1/5">Subtopic</th>
                 <th className="px-6 py-4 font-medium w-1/6">Difficulty</th>
                 <th className="px-6 py-4 font-medium hidden lg:table-cell w-1/5">Companies</th>
-                <th className="px-6 py-4 font-medium text-right">Actions</th>
+                {isAdmin && <th className="px-6 py-4 font-medium text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -290,28 +294,30 @@ export default function SolvePage() {
                         <span className="text-slate-400">-</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Link 
-                          to={`/admin/add?mode=edit&problemId=${row.id}`}
-                          className="w-8 h-8 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-500 hover:text-indigo-600 transition-colors"
-                        >
-                          <Edit2 size={14} />
-                        </Link>
-                        <button 
-                          onClick={() => handleDeleteProblem(row.id)}
-                          className="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-100 flex items-center justify-center text-rose-500 transition-colors"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
+                    {isAdmin && (
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Link 
+                            to={`/admin/add?mode=edit&problemId=${row.id}`}
+                            className="w-8 h-8 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-500 hover:text-indigo-600 transition-colors"
+                          >
+                            <Edit2 size={14} />
+                          </Link>
+                          <button 
+                            onClick={() => handleDeleteProblem(row.id)}
+                            className="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-100 flex items-center justify-center text-rose-500 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               
               {filteredRows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-16 text-center text-slate-500">
+                  <td colSpan={isAdmin ? 5 : 4} className="px-6 py-16 text-center text-slate-500">
                     <div className="flex flex-col items-center gap-3">
                       <Search size={32} className="text-slate-300" />
                       <p>No matching questions found.</p>

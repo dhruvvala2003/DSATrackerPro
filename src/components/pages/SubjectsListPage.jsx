@@ -55,11 +55,25 @@ export default function SubjectsListPage() {
     if (!name || !name.trim()) return
 
     try {
-      const { data, error } = await supabase
+      const { data: authData } = await supabase.auth.getUser()
+      const payload = { name: name.trim() }
+      if (authData?.user?.id) {
+        payload.user_id = authData.user.id
+      }
+
+      let { data, error } = await supabase
         .from('notes_subjects')
-        .insert({ name: name.trim() })
+        .insert(payload)
         .select()
         .single()
+
+      // If user_id column doesn't exist yet before SQL is run, retry without it
+      if (error && error.message?.includes('column "user_id" of relation')) {
+        delete payload.user_id
+        const retry = await supabase.from('notes_subjects').insert(payload).select().single()
+        data = retry.data
+        error = retry.error
+      }
       
       if (error) throw error
       if (data) {
