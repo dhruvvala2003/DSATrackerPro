@@ -106,6 +106,22 @@ export async function deleteSubnote(subnoteId) {
   if (error) throw error
 }
 
+export async function updateSubnote(subnoteId, { name, description }) {
+  const payload = { updated_at: new Date().toISOString() }
+  if (name !== undefined) payload.name = name.trim()
+  if (description !== undefined) payload.description = description?.trim() || null
+
+  const { data, error } = await supabase
+    .from('notes_subnotes')
+    .update(payload)
+    .eq('id', subnoteId)
+    .select()
+    .single()
+
+  if (error) throw error
+  return data
+}
+
 export async function fetchPageList(identifier, { bySubnote = true, withContent = false, signal } = {}) {
   await waitForPendingWrites()
   const column = bySubnote ? 'subnote_id' : 'subject_id'

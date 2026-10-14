@@ -20,7 +20,8 @@ import {
   deletePage,
   fetchPageList,
   fetchSubject,
-  fetchSubnote
+  fetchSubnote,
+  updateSubnote
 } from '../../lib/notesApi'
 import { countMedia, extractText, findFirstImage } from '../../lib/noteContent'
 import { toast } from '../../lib/toast'
@@ -125,6 +126,22 @@ export default function NotesListPage() {
     }
   }
 
+  const handleRenameSubnote = async () => {
+    if (!subnote) return
+    const newName = window.prompt(`Rename sub-note:`, subnote.name)
+    if (!newName || !newName.trim() || newName.trim() === subnote.name) return
+    try {
+      const updated = await updateSubnote(subnote.id, { name: newName.trim() })
+      if (updated) {
+        setSubnote((prev) => ({ ...prev, name: updated.name }))
+        toast.success('Sub-note renamed')
+      }
+    } catch (err) {
+      console.error('Error renaming subnote:', err)
+      toast.error('Failed to rename sub-note')
+    }
+  }
+
   const query = search.trim().toLowerCase()
   const filteredPages = pages.filter(
     (p) => !query || titleOf(p).toLowerCase().includes(query) || p.preview.toLowerCase().includes(query)
@@ -176,9 +193,20 @@ export default function NotesListPage() {
               </>
             )}
           </div>
-          <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-slate-900 mb-2">
-            {displayName}
-          </h1>
+          <div className="flex items-center gap-3 mb-2">
+            <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-slate-900">
+              {displayName}
+            </h1>
+            {subnoteId && (
+              <button
+                onClick={handleRenameSubnote}
+                className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                title="Rename this sub-note"
+              >
+                <Pencil size={20} />
+              </button>
+            )}
+          </div>
           <p className="text-base text-slate-600 max-w-2xl">
             {pages.length} {pages.length === 1 ? 'page' : 'pages'} in this sub-note.
           </p>

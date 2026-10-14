@@ -10,10 +10,11 @@ import {
   Search,
   Trash2,
   ChevronRight,
-  FileText
+  FileText,
+  Pencil
 } from 'lucide-react'
 import Loading from '../common/Loading'
-import { fetchSubject, fetchSubnotes, createSubnote, deleteSubnote } from '../../lib/notesApi'
+import { fetchSubject, fetchSubnotes, createSubnote, deleteSubnote, updateSubnote } from '../../lib/notesApi'
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -75,6 +76,23 @@ export default function SubnotesListPage() {
     } catch (err) {
       console.error('Error creating subnote:', err)
       alert('Failed to create subnote. Please check database permissions.')
+    }
+  }
+
+  const handleRename = async (subnote) => {
+    const newName = window.prompt(`Rename sub-note "${subnote.name}":`, subnote.name)
+    if (!newName || !newName.trim() || newName.trim() === subnote.name) return
+
+    try {
+      const updated = await updateSubnote(subnote.id, { name: newName.trim() })
+      if (updated) {
+        setSubnotes((current) =>
+          current.map((sn) => (sn.id === subnote.id ? { ...sn, name: updated.name } : sn))
+        )
+      }
+    } catch (err) {
+      console.error('Error renaming subnote:', err)
+      alert('Failed to rename sub-note.')
     }
   }
 
@@ -203,16 +221,30 @@ export default function SubnotesListPage() {
                     <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 group-hover:scale-110 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-sm">
                       <Layers size={22} />
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault()
-                        handleDelete(subnote.id, subnote.name)
-                      }}
-                      className="w-8 h-8 rounded-lg hover:bg-rose-50 flex items-center justify-center text-slate-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete Sub-note"
-                    >
-                      <Trash2 size={15} />
-                    </button>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          handleRename(subnote)
+                        }}
+                        className="w-8 h-8 rounded-lg hover:bg-indigo-50 flex items-center justify-center text-slate-400 hover:text-indigo-600 transition-colors"
+                        title="Rename Sub-note"
+                      >
+                        <Pencil size={15} />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          handleDelete(subnote.id, subnote.name)
+                        }}
+                        className="w-8 h-8 rounded-lg hover:bg-rose-50 flex items-center justify-center text-slate-300 hover:text-rose-500 transition-colors"
+                        title="Delete Sub-note"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </div>
 
                   <h3 className="text-lg font-bold text-slate-900 mb-1 group-hover:text-indigo-600 transition-colors relative z-10 line-clamp-1">
