@@ -12,6 +12,7 @@ import ProblemDetailPage from './components/pages/ProblemDetailPage'
 import AdminPanel from './components/pages/AdminPanel'
 import SolvePage from './components/pages/SolvePage'
 import SubjectsListPage from './components/pages/SubjectsListPage'
+import SubnotesListPage from './components/pages/SubnotesListPage'
 import NotesListPage from './components/pages/NotesListPage'
 import AuthPage from './components/pages/AuthPage'
 import ResetPasswordPage from './components/pages/ResetPasswordPage'
@@ -26,8 +27,10 @@ import './App.css'
 const NoteEditorPage = lazy(() => import('./components/pages/NoteEditorPage'))
 const NoteReaderPage = lazy(() => import('./components/pages/NoteReaderPage'))
 
-// Moving between pages of the same subject keeps the editor/reader screen mounted
+// Moving between pages of the same subnote/subject keeps the editor/reader screen mounted
 function routeKey(pathname) {
+  const sub = /^\/notes\/subject\/([^/]+)\/subnote\/([^/]+)\/(edit|read)(?:\/|$)/.exec(pathname)
+  if (sub) return `/notes/subject/${sub[1]}/subnote/${sub[2]}/${sub[3]}`
   const notes = /^\/notes\/subject\/([^/]+)\/(edit|read)(?:\/|$)/.exec(pathname)
   return notes ? `/notes/subject/${notes[1]}/${notes[2]}` : pathname
 }
@@ -141,7 +144,7 @@ function AnimatedRoutes() {
           }
         />
 
-        {/* Notes routes (scoped to authenticated user) */}
+        {/* Notes routes: Subject -> Subnotes -> Pages */}
         <Route
           path="/notes"
           element={
@@ -150,8 +153,60 @@ function AnimatedRoutes() {
             </ProtectedRoute>
           }
         />
+        {/* Layer 2: Sub-notes list for a subject */}
         <Route
           path="/notes/subject/:subjectId"
+          element={
+            <ProtectedRoute>
+              <SubnotesListPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Layer 3: Pages list inside a sub-note */}
+        <Route
+          path="/notes/subject/:subjectId/subnote/:subnoteId"
+          element={
+            <ProtectedRoute>
+              <NotesListPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/notes/subject/:subjectId/subnote/:subnoteId/edit"
+          element={
+            <ProtectedRoute>
+              <NoteEditorPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/notes/subject/:subjectId/subnote/:subnoteId/edit/:pageId"
+          element={
+            <ProtectedRoute>
+              <NoteEditorPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/notes/subject/:subjectId/subnote/:subnoteId/read"
+          element={
+            <ProtectedRoute>
+              <NoteReaderPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/notes/subject/:subjectId/subnote/:subnoteId/read/:pageId"
+          element={
+            <ProtectedRoute>
+              <NoteReaderPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Fallbacks for direct subject routes */}
+        <Route
+          path="/notes/subject/:subjectId/pages"
           element={
             <ProtectedRoute>
               <NotesListPage />

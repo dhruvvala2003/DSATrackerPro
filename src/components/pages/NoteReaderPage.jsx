@@ -87,9 +87,9 @@ function PageList({ pages, currentIndex, onSelect }) {
 }
 
 export default function NoteReaderPage() {
-  const { subjectId, pageId } = useParams()
+  const { subjectId, subnoteId, pageId } = useParams()
   const navigate = useNavigate()
-  const [meta, setMeta] = useState(null) // { subject, pages } | { error }
+  const [meta, setMeta] = useState(null) // { subject, subnote, pages } | { error }
   const [contentById, setContentById] = useState({})
   const [lightbox, setLightbox] = useState(null)
   const [pagesOpen, setPagesOpen] = useState(false)
@@ -97,13 +97,38 @@ export default function NoteReaderPage() {
   const articleRef = useRef(null)
   const progressRef = useRef(null)
 
+  const basePath = subnoteId
+    ? `/notes/subject/${subjectId}/subnote/${subnoteId}`
+    : `/notes/subject/${subjectId}`
+
   useEffect(() => {
     const controller = new AbortController()
-    Promise.all([fetchSubject(subjectId, controller.signal), fetchPageList(subjectId, { signal: controller.signal })])
-      .then(([subject, pages]) => { if (!controller.signal.aborted) setMeta({ subject, pages }) })
-      .catch((error) => { if (!controller.signal.aborted) setMeta({ error }) })
+    if (subnoteId) {
+      Promise.all([
+        fetchSubject(subjectId, controller.signal),
+        fetchSubnote(subnoteId, controller.signal),
+        fetchPageList(subnoteId, { bySubnote: true, signal: controller.signal }),
+      ])
+        .then(([subject, subnote, pages]) => {
+          if (!controller.signal.aborted) setMeta({ subject: subject || subnote?.notes_subjects, subnote, pages })
+        })
+        .catch((error) => {
+          if (!controller.signal.aborted) setMeta({ error })
+        })
+    } else {
+      Promise.all([
+        fetchSubject(subjectId, controller.signal),
+        fetchPageList(subjectId, { bySubnote: false, signal: controller.signal }),
+      ])
+        .then(([subject, pages]) => {
+          if (!controller.signal.aborted) setMeta({ subject, subnote: null, pages })
+        })
+        .catch((error) => {
+          if (!controller.signal.aborted) setMeta({ error })
+        })
+    }
     return () => controller.abort()
-  }, [subjectId])
+  }, [subjectId, subnoteId])
 
   const pages = useMemo(() => meta?.pages || [], [meta])
   const foundIndex = pageId ? pages.findIndex((p) => p.id === pageId) : 0
@@ -135,9 +160,9 @@ export default function NoteReaderPage() {
     const target = pages[i]
     if (!target) return
     setPagesOpen(false)
-    navigate(`/notes/subject/${subjectId}/read/${target.id}`, { replace: true })
+    navigate(`${basePath}/read/${target.id}`, { replace: true })
     window.scrollTo({ top: 0 })
-  }, [pages, subjectId, navigate])
+  }, [pages, basePath, navigate])
 
   // Reading progress bar + "On this page" highlighting
   useEffect(() => {
@@ -229,9 +254,9 @@ export default function NoteReaderPage() {
 
       {/* Top bar */}
       <div className="relative flex items-center justify-between gap-3 mb-6">
-        <Link to={`/notes/subject/${subjectId}`} className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors group min-w-0">
+        <Link to={basePath} className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors group min-w-0">
           <ArrowLeft size={16} className="shrink-0 group-hover:-translate-x-1 transition-transform" />
-          <span className="truncate">Back to {meta.subject.name}</span>
+          <span className="truncate">Back to {meta.subnote?.name || meta.subject?.name || 'notes'}</span>
         </Link>
         <div className="flex items-center gap-2 shrink-0">
           <button
@@ -242,7 +267,7 @@ export default function NoteReaderPage() {
             <ListTree size={15} /> Pages
           </button>
           <Link
-            to={`/notes/subject/${subjectId}/edit/${currentId}`}
+            to={`${basePath}/edit/${currentId}`}
             className="h-9 px-3.5 rounded-xl inline-flex items-center gap-1.5 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm transition-colors"
           >
             <Pencil size={14} /> Edit

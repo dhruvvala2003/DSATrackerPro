@@ -34,7 +34,7 @@ export async function waitForPendingWrites(timeoutMs = 8000) {
 }
 
 // ---------------------------------------------------------------------------
-// Queries
+// Queries & Mutations for Subjects & Subnotes
 // ---------------------------------------------------------------------------
 export async function fetchSubject(subjectId, signal) {
   let query = supabase.from('notes_subjects').select('*').eq('id', subjectId).maybeSingle()
@@ -44,12 +44,75 @@ export async function fetchSubject(subjectId, signal) {
   return data
 }
 
-export async function fetchPageList(subjectId, { withContent = false, signal } = {}) {
+export async function fetchSubnotes(subjectId, signal) {
+  let query = supabase
+    .from('notes_subnotes')
+    .select('*, notes_pages(id)')
+    .eq('subject_id', subjectId)
+    .order('created_at', { ascending: true })
+  if (signal) query = query.abortSignal(signal)
+  const { data, error } = await query
+  if (error) throw error
+
+  return (data || []).map((item) => ({
+    ...item,
+    pageCount: Array.isArray(item.notes_pages) ? item.notes_pages.length : 0,
+  }))
+}
+
+export async function fetchSubnote(subnoteId, signal) {
+  let query = supabase
+    .from('notes_subnotes')
+    .select('*, notes_subjects(id, name)')
+    .eq('id', subnoteId)
+    .maybeSingle()
+  if (signal) query = query.abortSignal(signal)
+  const { data, error } = await query
+  if (error) throw error
+  return data
+}
+
+export async function createSubnote(subjectId, name, description = '') {
+  const { data: authData } = await supabase.auth.getUser()
+  const payload = {
+    subject_id: subjectId,
+    name: name.trim(),
+    description: description?.trim() || null,
+    updated_at: new Date().toISOString(),
+  }
+  if (authData?.user?.id) {
+    payload.user_id = authData.user.id
+  }
+
+  let { data, error } = await supabase
+    .from('notes_subnotes')
+    .insert(payload)
+    .select()
+    .single()
+
+  if (error && error.message?.includes('column "user_id" of relation')) {
+    delete payload.user_id
+    const retry = await supabase.from('notes_subnotes').insert(payload).select().single()
+    data = retry.data
+    error = retry.error
+  }
+
+  if (error) throw error
+  return data
+}
+
+export async function deleteSubnote(subnoteId) {
+  const { error } = await supabase.from('notes_subnotes').delete().eq('id', subnoteId)
+  if (error) throw error
+}
+
+export async function fetchPageList(identifier, { bySubnote = true, withContent = false, signal } = {}) {
   await waitForPendingWrites()
+  const column = bySubnote ? 'subnote_id' : 'subject_id'
   let query = supabase
     .from('notes_pages')
     .select(withContent ? `${PAGE_META_COLUMNS}, content` : PAGE_META_COLUMNS)
-    .eq('subject_id', subjectId)
+    .eq(column, identifier)
     .order('page_order', { ascending: true })
     .order('created_at', { ascending: true })
   if (signal) query = query.abortSignal(signal)
@@ -67,26 +130,32 @@ export async function fetchPage(pageId, signal) {
   return data
 }
 
-export async function createPage(subjectId) {
-  const { data: last, error: orderError } = await supabase
+export async function createPage(subnoteId, subjectId) {
+  let orderQuery = supabase
     .from('notes_pages')
     .select('page_order')
-    .eq('subject_id', subjectId)
     .order('page_order', { ascending: false })
     .limit(1)
+
+  if (subnoteId) {
+    orderQuery = orderQuery.eq('subnote_id', subnoteId)
+  } else if (subjectId) {
+    orderQuery = orderQuery.eq('subject_id', subjectId)
+  }
+
+  const { data: last, error: orderError } = await orderQuery
   if (orderError) throw orderError
 
   const { data: authData } = await supabase.auth.getUser()
   const payload = {
-    subject_id: subjectId,
     title: UNTITLED,
     content: null,
     page_order: (last?.[0]?.page_order ?? -1) + 1,
     updated_at: new Date().toISOString(),
   }
-  if (authData?.user?.id) {
-    payload.user_id = authData.user.id
-  }
+  if (subnoteId) payload.subnote_id = subnoteId
+  if (subjectId) payload.subject_id = subjectId
+  if (authData?.user?.id) payload.user_id = authData.user.id
 
   let { data, error } = await supabase
     .from('notes_pages')
@@ -94,9 +163,8 @@ export async function createPage(subjectId) {
     .select()
     .single()
 
-  // Gracefully fallback if user_id column doesn't exist yet before SQL migration is executed
-  if (error && error.message?.includes('column "user_id" of relation')) {
-    delete payload.user_id
+  if (error && error.message?.includes('column "subnote_id" of relation')) {
+    delete payload.subnote_id
     const retry = await supabase.from('notes_pages').insert(payload).select().single()
     data = retry.data
     error = retry.error
