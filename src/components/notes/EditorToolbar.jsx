@@ -2,13 +2,15 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom'
 import { useEditorState } from '@tiptap/react'
 import {
-  AlignCenter, AlignJustify, AlignLeft, AlignRight, Baseline, Bold, ChevronDown, Code2, Flame, Highlighter,
+  AlignCenter, AlignJustify, AlignLeft, AlignRight, ALargeSmall, Baseline, Bold, ChevronDown, Code2, Flame, Highlighter,
   ImageIcon, Info, Italic, Lightbulb, Link2, List, ListChecks, ListOrdered, Minus, Quote, Redo2,
   Table, TriangleAlert, Underline, Undo2, Video,
 } from 'lucide-react'
 import { runInsert } from './editorCommands'
 import { applyLink } from './linkUtils'
 import { getLastCodeLanguage } from './lowlight'
+
+const FONT_SIZES = ['12px', '14px', '16px', '18px', '20px', '24px', '28px', '32px', '36px', '40px', '48px', '64px']
 
 const TEXT_COLORS = [
   '#0F172A', '#475569', '#94A3B8', '#DC2626', '#EA580C', '#CA8A04',
@@ -210,6 +212,7 @@ function readToolbarState({ editor }) {
   const heading = [1, 2, 3].find((level) => editor.isActive('heading', { level }))
   return {
     block: heading ? `h${heading}` : 'p',
+    fontSize: editor.getAttributes('textStyle')?.fontSize || '24px',
     bold: editor.isActive('bold'),
     italic: editor.isActive('italic'),
     underline: editor.isActive('underline'),
@@ -251,6 +254,43 @@ export default function EditorToolbar({ editor, onOpenMedia, status }) {
               <span className={type.value === 'h1' ? 'text-lg font-bold' : type.value === 'h2' ? 'text-base font-bold' : type.value === 'h3' ? 'font-semibold' : ''}>{type.label}</span>
             </MenuItem>
           ))}
+        </Dropdown>
+
+        <Dropdown
+          title="Font size"
+          button={
+            <span className="flex items-center gap-1 text-xs font-semibold px-0.5">
+              <ALargeSmall size={16} className="text-slate-500" />
+              <span>{s.fontSize ? s.fontSize.replace('px', '') : '24'}</span>
+            </span>
+          }
+        >
+          {(close) => (
+            <div className="max-h-64 overflow-y-auto min-w-[130px] py-1 [scrollbar-width:thin]">
+              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Font size</div>
+              {FONT_SIZES.map((size) => {
+                const isDefault = size === '24px'
+                const isSelected = s.fontSize === size || (!s.fontSize && isDefault)
+                return (
+                  <MenuItem
+                    key={size}
+                    active={isSelected}
+                    onClick={() => {
+                      if (isDefault) {
+                        run((c) => c.setFontSize('24px'))
+                      } else {
+                        run((c) => c.setFontSize(size))
+                      }
+                      close()
+                    }}
+                  >
+                    <span>{size.replace('px', '')}</span>
+                    {isDefault && <span className="text-[11px] text-slate-400 ml-auto">(Default)</span>}
+                  </MenuItem>
+                )
+              })}
+            </div>
+          )}
         </Dropdown>
         <Separator />
 

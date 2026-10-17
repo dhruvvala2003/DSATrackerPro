@@ -27,7 +27,7 @@ function readSelectionState({ editor }) {
     code: editor.isActive('code'),
     highlight: editor.isActive('highlight'),
     heading: editor.isActive('heading', { level: 1 }), // Changed to level 1 per user request
-    fontSize: editor.getAttributes('textStyle')?.fontSize || '18px',
+    fontSize: editor.getAttributes('textStyle')?.fontSize || '24px',
     link: editor.isActive('link') ? editor.getAttributes('link').href || '' : null,
   }
 }
@@ -50,7 +50,7 @@ function BubbleButton({ active, title, onClick, children }) {
   )
 }
 
-const FONT_SIZES = ['14px', '16px', '18px', '20px', '24px', '28px', '32px']
+const FONT_SIZES = ['12px', '14px', '16px', '18px', '20px', '24px', '28px', '32px', '36px', '40px', '48px', '64px']
 
 export default function SelectionMenu({ editor }) {
   const [linkDraft, setLinkDraft] = useState(null) // null = buttons, string = editing a link

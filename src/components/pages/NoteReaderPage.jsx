@@ -5,12 +5,24 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, CircleAlert, Clock, FileText, ImageIcon, ListTree, Pencil, Plus, Video, X } from 'lucide-react'
 import Loading from '../common/Loading'
 import ReadOnlyNote from '../notes/ReadOnlyNote'
-import { UNTITLED, fetchPage, fetchPageList, fetchSubject } from '../../lib/notesApi'
+import { UNTITLED, fetchPage, fetchPageList, fetchSubject, fetchSubnote } from '../../lib/notesApi'
 import { collectHeadings, countMedia, countWords, isDocEmpty, readingMinutes } from '../../lib/noteContent'
 
 const HEADER_OFFSET = 64
 
 const titleOf = (page) => (page?.title && page.title !== UNTITLED ? page.title : 'Untitled')
+
+function parseDoc(raw) {
+  if (!raw) return null
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return raw
+    }
+  }
+  return raw
+}
 
 function updatedLabel(dateStr) {
   if (!dateStr) return ''
@@ -94,6 +106,7 @@ export default function NoteReaderPage() {
   const [lightbox, setLightbox] = useState(null)
   const [pagesOpen, setPagesOpen] = useState(false)
   const [activeHeading, setActiveHeading] = useState(-1)
+  const [viewMode, setViewMode] = useState(pageId ? 'single' : 'all') // 'single' | 'all'
   const articleRef = useRef(null)
   const progressRef = useRef(null)
 
@@ -102,15 +115,26 @@ export default function NoteReaderPage() {
     : `/notes/subject/${subjectId}`
 
   useEffect(() => {
+    if (pageId) setViewMode('single')
+  }, [pageId])
+
+  useEffect(() => {
     const controller = new AbortController()
     if (subnoteId) {
       Promise.all([
         fetchSubject(subjectId, controller.signal),
         fetchSubnote(subnoteId, controller.signal),
-        fetchPageList(subnoteId, { bySubnote: true, signal: controller.signal }),
+        fetchPageList(subnoteId, { bySubnote: true, withContent: true, signal: controller.signal }),
       ])
         .then(([subject, subnote, pages]) => {
-          if (!controller.signal.aborted) setMeta({ subject: subject || subnote?.notes_subjects, subnote, pages })
+          if (!controller.signal.aborted) {
+            setMeta({ subject: subject || subnote?.notes_subjects, subnote, pages })
+            const map = {}
+            pages.forEach((p) => {
+              if (p && p.id) map[p.id] = p
+            })
+            setContentById((prev) => ({ ...map, ...prev }))
+          }
         })
         .catch((error) => {
           if (!controller.signal.aborted) setMeta({ error })
@@ -118,10 +142,17 @@ export default function NoteReaderPage() {
     } else {
       Promise.all([
         fetchSubject(subjectId, controller.signal),
-        fetchPageList(subjectId, { bySubnote: false, signal: controller.signal }),
+        fetchPageList(subjectId, { bySubnote: false, withContent: true, signal: controller.signal }),
       ])
         .then(([subject, pages]) => {
-          if (!controller.signal.aborted) setMeta({ subject, subnote: null, pages })
+          if (!controller.signal.aborted) {
+            setMeta({ subject, subnote: null, pages })
+            const map = {}
+            pages.forEach((p) => {
+              if (p && p.id) map[p.id] = p
+            })
+            setContentById((prev) => ({ ...map, ...prev }))
+          }
         })
         .catch((error) => {
           if (!controller.signal.aborted) setMeta({ error })
@@ -138,7 +169,7 @@ export default function NoteReaderPage() {
   const row = currentId ? contentById[currentId] : undefined
 
   useEffect(() => {
-    if (!currentId || contentById[currentId]) return undefined
+    if (!currentId || (contentById[currentId] && contentById[currentId].content !== undefined)) return undefined
     const controller = new AbortController()
     fetchPage(currentId, controller.signal)
       .then((page) => {
@@ -150,7 +181,7 @@ export default function NoteReaderPage() {
     return () => controller.abort()
   }, [currentId, contentById])
 
-  const content = row && !row.error && !row.missing ? row.content : null
+  const content = row && !row.error && !row.missing ? parseDoc(row.content) : null
   // Indices match headingElements(), so empty headings stay in the list and are just not shown.
   const headings = useMemo(() => collectHeadings(content), [content])
   const outlineSize = headings.filter((heading) => heading.text).length
@@ -232,8 +263,8 @@ export default function NoteReaderPage() {
         <div className="flex flex-col items-center justify-center py-24 px-6 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
           <div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-400 flex items-center justify-center mb-4"><BookOpen size={30} /></div>
           <h2 className="text-xl font-bold text-slate-900 mb-2">Nothing to read yet</h2>
-          <p className="text-slate-500 mb-6">Write the first page of {meta.subject.name}, then come back to read it here.</p>
-          <Link to={`/notes/subject/${subjectId}/edit`} className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md">
+          <p className="text-slate-500 mb-6">Write the first page of {meta.subnote?.name || meta.subject?.name || 'notes'}, then come back to read it here.</p>
+          <Link to={`${basePath}/edit`} className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md">
             <Plus size={18} /> Write the first page
           </Link>
         </div>
@@ -246,6 +277,18 @@ export default function NoteReaderPage() {
   const loadingContent = !row
   const empty = !loadingContent && !row.error && !row.missing && isDocEmpty(content)
 
+  const handlePageSelect = (i) => {
+    if (viewMode === 'all') {
+      const el = document.getElementById(`reader-page-${pages[i]?.id}`)
+      if (el) {
+        setPagesOpen(false)
+        el.scrollIntoView({ behavior: 'smooth' })
+        return
+      }
+    }
+    goTo(i)
+  }
+
   return (
     <motion.div className="w-full max-w-6xl mx-auto pb-24" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', stiffness: 120, damping: 18 }}>
       <div className="fixed left-0 right-0 z-40 h-[3px] pointer-events-none" style={{ top: HEADER_OFFSET }}>
@@ -253,12 +296,38 @@ export default function NoteReaderPage() {
       </div>
 
       {/* Top bar */}
-      <div className="relative flex items-center justify-between gap-3 mb-6">
+      <div className="relative flex flex-wrap items-center justify-between gap-3 mb-6">
         <Link to={basePath} className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors group min-w-0">
           <ArrowLeft size={16} className="shrink-0 group-hover:-translate-x-1 transition-transform" />
           <span className="truncate">Back to {meta.subnote?.name || meta.subject?.name || 'notes'}</span>
         </Link>
         <div className="flex items-center gap-2 shrink-0">
+          {pages.length > 1 && (
+            <div className="inline-flex rounded-xl p-1 bg-slate-100 border border-slate-200 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setViewMode('single')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  viewMode === 'single'
+                    ? 'bg-white text-indigo-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Single Page
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('all')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  viewMode === 'all'
+                    ? 'bg-white text-indigo-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All Pages ({pages.length})
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => setPagesOpen((open) => !open)}
@@ -266,12 +335,14 @@ export default function NoteReaderPage() {
           >
             <ListTree size={15} /> Pages
           </button>
-          <Link
-            to={`${basePath}/edit/${currentId}`}
-            className="h-9 px-3.5 rounded-xl inline-flex items-center gap-1.5 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm transition-colors"
-          >
-            <Pencil size={14} /> Edit
-          </Link>
+          {viewMode === 'single' && (
+            <Link
+              to={`${basePath}/edit/${currentId}`}
+              className="h-9 px-3.5 rounded-xl inline-flex items-center gap-1.5 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm transition-colors"
+            >
+              <Pencil size={14} /> Edit
+            </Link>
+          )}
         </div>
         <AnimatePresence>
           {pagesOpen && (
@@ -281,7 +352,7 @@ export default function NoteReaderPage() {
               exit={{ opacity: 0, y: -6 }}
               className="lg:hidden absolute top-full right-0 mt-2 z-40 w-72 max-h-80 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl"
             >
-              <PageList pages={pages} currentIndex={index} onSelect={goTo} />
+              <PageList pages={pages} currentIndex={viewMode === 'single' ? index : -1} onSelect={handlePageSelect} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -289,7 +360,7 @@ export default function NoteReaderPage() {
 
       <div className="grid lg:grid-cols-[248px_minmax(0,1fr)] gap-8 xl:gap-12 items-start">
         <aside className="hidden lg:block sticky top-24 space-y-4">
-          {outlineSize > 1 && (
+          {viewMode === 'single' && outlineSize > 1 && (
             <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-4 shadow-sm">
               <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">On this page</p>
               <nav className="space-y-0.5 max-h-[40vh] overflow-y-auto">
@@ -311,74 +382,131 @@ export default function NoteReaderPage() {
           <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-3 shadow-sm">
             <p className="px-2.5 pt-1 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Pages</p>
             <div className="max-h-[40vh] overflow-y-auto">
-              <PageList pages={pages} currentIndex={index} onSelect={goTo} />
+              <PageList pages={pages} currentIndex={viewMode === 'single' ? index : -1} onSelect={handlePageSelect} />
             </div>
           </div>
         </aside>
 
-        <article
-          ref={articleRef}
-          onClick={openImage}
-          className="min-w-0 rounded-3xl border border-slate-200 bg-white px-5 sm:px-12 lg:px-16 py-10 sm:py-14 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_24px_48px_-32px_rgba(15,23,42,0.25)]"
-        >
-          <div className="max-w-[720px] mx-auto">
-            <div className="flex flex-wrap items-center gap-2 mb-5 text-xs font-semibold">
-              <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">{meta.subject.name}</span>
-              <span className="text-slate-400">Page {index + 1} of {pages.length}</span>
-            </div>
-            <h1 className="text-3xl sm:text-[2.75rem] font-extrabold tracking-tight leading-[1.15] text-slate-900">{titleOf(current)}</h1>
-            <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-slate-400">
-              <span className="inline-flex items-center gap-1.5"><Clock size={14} /> {readingMinutes(stats.words)} min read</span>
-              <span>{updatedLabel(row?.updated_at || current.updated_at)}</span>
-              {stats.images > 0 && <span className="inline-flex items-center gap-1.5"><ImageIcon size={14} /> {stats.images}</span>}
-              {stats.videos > 0 && <span className="inline-flex items-center gap-1.5"><Video size={14} /> {stats.videos}</span>}
-            </div>
-            <div className="my-8 h-px bg-gradient-to-r from-slate-200 via-slate-200 to-transparent" />
+        {viewMode === 'all' ? (
+          <div className="space-y-8">
+            {pages.map((p, i) => {
+              const pRow = contentById[p.id] || p
+              const pContent = parseDoc(pRow.content)
+              const pStats = { words: countWords(pContent), ...countMedia(pContent) }
+              const pEmpty = isDocEmpty(pContent)
 
-            {loadingContent && (
-              <div className="space-y-3 animate-pulse">
-                <div className="h-4 rounded bg-slate-100" />
-                <div className="h-4 w-11/12 rounded bg-slate-100" />
-                <div className="h-4 w-4/5 rounded bg-slate-100" />
-              </div>
-            )}
-            {row?.error && (
-              <p className="flex items-center gap-2 text-rose-600"><CircleAlert size={18} /> Couldn’t load this page. {row.error.message}</p>
-            )}
-            {empty && (
-              <div className="text-center py-12">
-                <FileText size={32} className="mx-auto text-slate-300 mb-3" />
-                <p className="text-slate-500 mb-4">This page is empty.</p>
-                <Link to={`/notes/subject/${subjectId}/edit/${currentId}`} className="text-indigo-600 font-semibold hover:text-indigo-700">Start writing →</Link>
-              </div>
-            )}
-            {!loadingContent && !row.error && !row.missing && !empty && <ReadOnlyNote key={currentId} content={content} />}
+              return (
+                <article
+                  key={p.id}
+                  id={`reader-page-${p.id}`}
+                  onClick={openImage}
+                  className="min-w-0 rounded-3xl border border-slate-200 bg-white px-5 sm:px-12 lg:px-16 py-10 sm:py-14 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_24px_48px_-32px_rgba(15,23,42,0.25)] scroll-mt-24"
+                >
+                  <div className="max-w-[720px] mx-auto">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-5 text-xs font-semibold">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
+                          {meta.subnote?.name || meta.subject?.name || 'Notes'}
+                        </span>
+                        <span className="text-slate-400">Page {i + 1} of {pages.length}</span>
+                      </div>
+                      <Link
+                        to={`${basePath}/edit/${p.id}`}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-50 text-xs font-semibold transition-colors"
+                      >
+                        <Pencil size={12} /> Edit
+                      </Link>
+                    </div>
+                    <h2 className="text-3xl sm:text-[2.5rem] font-extrabold tracking-tight leading-[1.15] text-slate-900 mb-3">
+                      {titleOf(p)}
+                    </h2>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-slate-400">
+                      <span className="inline-flex items-center gap-1.5"><Clock size={14} /> {readingMinutes(pStats.words)} min read</span>
+                      <span>{updatedLabel(p.updated_at || p.created_at)}</span>
+                      {pStats.images > 0 && <span className="inline-flex items-center gap-1.5"><ImageIcon size={14} /> {pStats.images}</span>}
+                      {pStats.videos > 0 && <span className="inline-flex items-center gap-1.5"><Video size={14} /> {pStats.videos}</span>}
+                    </div>
+                    <div className="my-8 h-px bg-gradient-to-r from-slate-200 via-slate-200 to-transparent" />
+
+                    {pEmpty ? (
+                      <div className="py-6 text-center text-slate-400 italic text-sm">
+                        This page is empty.
+                      </div>
+                    ) : (
+                      <ReadOnlyNote content={pContent} />
+                    )}
+                  </div>
+                </article>
+              )
+            })}
           </div>
-        </article>
+        ) : (
+          <article
+            ref={articleRef}
+            onClick={openImage}
+            className="min-w-0 rounded-3xl border border-slate-200 bg-white px-5 sm:px-12 lg:px-16 py-10 sm:py-14 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_24px_48px_-32px_rgba(15,23,42,0.25)]"
+          >
+            <div className="max-w-[720px] mx-auto">
+              <div className="flex flex-wrap items-center gap-2 mb-5 text-xs font-semibold">
+                <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">{meta.subnote?.name || meta.subject?.name || 'Notes'}</span>
+                <span className="text-slate-400">Page {index + 1} of {pages.length}</span>
+              </div>
+              <h1 className="text-3xl sm:text-[2.75rem] font-extrabold tracking-tight leading-[1.15] text-slate-900">{titleOf(current)}</h1>
+              <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-slate-400">
+                <span className="inline-flex items-center gap-1.5"><Clock size={14} /> {readingMinutes(stats.words)} min read</span>
+                <span>{updatedLabel(row?.updated_at || current.updated_at)}</span>
+                {stats.images > 0 && <span className="inline-flex items-center gap-1.5"><ImageIcon size={14} /> {stats.images}</span>}
+                {stats.videos > 0 && <span className="inline-flex items-center gap-1.5"><Video size={14} /> {stats.videos}</span>}
+              </div>
+              <div className="my-8 h-px bg-gradient-to-r from-slate-200 via-slate-200 to-transparent" />
+
+              {loadingContent && (
+                <div className="space-y-3 animate-pulse">
+                  <div className="h-4 rounded bg-slate-100" />
+                  <div className="h-4 w-11/12 rounded bg-slate-100" />
+                  <div className="h-4 w-4/5 rounded bg-slate-100" />
+                </div>
+              )}
+              {row?.error && (
+                <p className="flex items-center gap-2 text-rose-600"><CircleAlert size={18} /> Couldn’t load this page. {row.error.message}</p>
+              )}
+              {empty && (
+                <div className="text-center py-12">
+                  <FileText size={32} className="mx-auto text-slate-300 mb-3" />
+                  <p className="text-slate-500 mb-4">This page is empty.</p>
+                  <Link to={`${basePath}/edit/${currentId}`} className="text-indigo-600 font-semibold hover:text-indigo-700">Start writing →</Link>
+                </div>
+              )}
+              {!loadingContent && !row.error && !row.missing && !empty && <ReadOnlyNote key={currentId} content={content} />}
+            </div>
+          </article>
+        )}
       </div>
 
       {/* Previous / next */}
-      <nav className="mt-8 grid sm:grid-cols-2 gap-4 lg:pl-[calc(248px+2rem)] xl:pl-[calc(248px+3rem)]" aria-label="Page navigation">
-        {prev ? (
-          <button type="button" onClick={() => goTo(index - 1)} className="group text-left p-5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all">
-            <span className="flex items-center gap-1 text-xs font-semibold text-slate-400 mb-1"><ChevronLeft size={14} className="group-hover:-translate-x-0.5 transition-transform" /> Previous</span>
-            <span className="block font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{titleOf(prev)}</span>
-          </button>
-        ) : <span className="hidden sm:block" />}
-        {next ? (
-          <button type="button" onClick={() => goTo(index + 1)} className="group text-right p-5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all">
-            <span className="flex items-center justify-end gap-1 text-xs font-semibold text-slate-400 mb-1">Next <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" /></span>
-            <span className="block font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{titleOf(next)}</span>
-          </button>
-        ) : (
-          <Link to={`/notes/subject/${subjectId}/edit`} className="group flex flex-col items-end justify-center p-5 rounded-2xl border border-dashed border-slate-300 text-right hover:border-indigo-300 hover:bg-indigo-50/40 transition-all">
-            <span className="text-xs font-semibold text-slate-400 mb-1">You’ve reached the end</span>
-            <span className="inline-flex items-center gap-1.5 font-bold text-indigo-600"><Plus size={16} /> Add another page</span>
-          </Link>
-        )}
-      </nav>
+      {viewMode === 'single' && (
+        <nav className="mt-8 grid sm:grid-cols-2 gap-4 lg:pl-[calc(248px+2rem)] xl:pl-[calc(248px+3rem)]" aria-label="Page navigation">
+          {prev ? (
+            <button type="button" onClick={() => goTo(index - 1)} className="group text-left p-5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all">
+              <span className="flex items-center gap-1 text-xs font-semibold text-slate-400 mb-1"><ChevronLeft size={14} className="group-hover:-translate-x-0.5 transition-transform" /> Previous</span>
+              <span className="block font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{titleOf(prev)}</span>
+            </button>
+          ) : <span className="hidden sm:block" />}
+          {next ? (
+            <button type="button" onClick={() => goTo(index + 1)} className="group text-right p-5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all">
+              <span className="flex items-center justify-end gap-1 text-xs font-semibold text-slate-400 mb-1">Next <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" /></span>
+              <span className="block font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{titleOf(next)}</span>
+            </button>
+          ) : (
+            <Link to={`${basePath}/edit`} className="group flex flex-col items-end justify-center p-5 rounded-2xl border border-dashed border-slate-300 text-right hover:border-indigo-300 hover:bg-indigo-50/40 transition-all">
+              <span className="text-xs font-semibold text-slate-400 mb-1">You’ve reached the end</span>
+              <span className="inline-flex items-center gap-1.5 font-bold text-indigo-600"><Plus size={16} /> Add another page</span>
+            </Link>
+          )}
+        </nav>
+      )}
 
-      {pages.length > 1 && (
+      {pages.length > 1 && viewMode === 'single' && (
         <p className="mt-6 text-center text-xs font-medium text-slate-400">
           Use <kbd className="px-1.5 py-0.5 rounded-md bg-white border border-slate-200 font-mono text-[10px] text-slate-500">←</kbd>{' '}
           <kbd className="px-1.5 py-0.5 rounded-md bg-white border border-slate-200 font-mono text-[10px] text-slate-500">→</kbd> to turn pages

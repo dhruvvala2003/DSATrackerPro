@@ -2,8 +2,8 @@
 
 .note-content {
   color: #1e293b;
-  font-size: 1.0625rem;
-  line-height: 1.8;
+  font-size: 24px;
+  line-height: 1.7;
   overflow-wrap: break-word;
   outline: none;
 }
@@ -14,8 +14,8 @@
 }
 
 .note-content--reader {
-  font-size: 1.1rem;
-  line-height: 1.85;
+  font-size: 24px;
+  line-height: 1.75;
 }
 
 .note-content > :first-child { margin-top: 0; }

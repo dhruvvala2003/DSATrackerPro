@@ -17,17 +17,31 @@ function createOnce(subnoteId, subjectId, key) {
 
 const displayTitle = (title) => (title && title !== UNTITLED ? title : '')
 
+function parseContent(raw) {
+  if (!raw) return null
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return raw
+    }
+  }
+  return raw
+}
+
 // Prefer this browser's unsaved draft when it is newer than what the server has.
 function prepareInitial(page) {
   const title = displayTitle(page.title)
   const draft = readDraft(page.id)
+  const serverContent = parseContent(page.content)
   if (draft) {
+    const draftContent = parseContent(draft.content)
     const newer = draft.savedAt > (Date.parse(page.updated_at) || 0)
-    const differs = (draft.title ?? '') !== title || !sameContent(draft.content, page.content)
-    if (newer && differs) return { title: draft.title ?? title, content: draft.content ?? null, restored: true }
+    const differs = (draft.title ?? '') !== title || !sameContent(draftContent, serverContent)
+    if (newer && differs) return { title: draft.title ?? title, content: draftContent ?? null, restored: true }
     clearDraft(page.id)
   }
-  return { title, content: page.content ?? null, restored: false }
+  return { title, content: serverContent ?? null, restored: false }
 }
 
 function PagesSidebar({ subject, subnote, basePath, pages, currentId }) {
